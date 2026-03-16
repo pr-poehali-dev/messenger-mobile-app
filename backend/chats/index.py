@@ -140,18 +140,37 @@ def handler(event: dict, context) -> dict:
                 if not cur.fetchone():
                     return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Нет доступа"})}
 
-                cur.execute(f"""
-                    SELECT m.id, m.sender_id, u.name, m.text, m.is_read, m.created_at,
-                           m.file_url, m.file_name, m.file_size, m.file_type,
-                           m.is_edited, m.hidden_at,
-                           m.reply_to_id, m.reply_to_text, m.reply_to_name
-                    FROM {SCHEMA}.messages m
-                    JOIN {SCHEMA}.users u ON u.id = m.sender_id
-                    WHERE m.chat_id = %s
-                    ORDER BY m.created_at ASC
-                    LIMIT 100
-                """, (chat_id,))
-                rows = cur.fetchall()
+                before_id = params.get("before_id")
+                if before_id:
+                    cur.execute(f"""
+                        SELECT m.id, m.sender_id, u.name, m.text, m.is_read, m.created_at,
+                               m.file_url, m.file_name, m.file_size, m.file_type,
+                               m.is_edited, m.hidden_at,
+                               m.reply_to_id, m.reply_to_text, m.reply_to_name
+                        FROM {SCHEMA}.messages m
+                        JOIN {SCHEMA}.users u ON u.id = m.sender_id
+                        WHERE m.chat_id = %s AND m.id < %s
+                        ORDER BY m.created_at DESC
+                        LIMIT 30
+                    """, (chat_id, before_id))
+                    rows = list(reversed(cur.fetchall()))
+                else:
+                    cur.execute(f"""
+                        SELECT m.id, m.sender_id, u.name, m.text, m.is_read, m.created_at,
+                               m.file_url, m.file_name, m.file_size, m.file_type,
+                               m.is_edited, m.hidden_at,
+                               m.reply_to_id, m.reply_to_text, m.reply_to_name
+                        FROM {SCHEMA}.messages m
+                        JOIN {SCHEMA}.users u ON u.id = m.sender_id
+                        WHERE m.chat_id = %s
+                        ORDER BY m.created_at DESC
+                        LIMIT 40
+                    """, (chat_id,))
+                    rows = list(reversed(cur.fetchall()))
+                has_more = False
+                if rows:
+                    cur.execute(f"SELECT 1 FROM {SCHEMA}.messages WHERE chat_id = %s AND id < %s LIMIT 1", (chat_id, rows[0][0]))
+                    has_more = cur.fetchone() is not None
 
                 # Load reactions for all messages
                 msg_ids = [r[0] for r in rows]
@@ -199,7 +218,7 @@ def handler(event: dict, context) -> dict:
                 "reply_to_name": r[14],
             } for r in rows]
 
-            return {"statusCode": 200, "headers": cors, "body": json.dumps({"messages": messages})}
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"messages": messages, "has_more": has_more})}
 
         # POST /send — отправить сообщение (текст или файл)
         if method == "POST" and "send" in path:

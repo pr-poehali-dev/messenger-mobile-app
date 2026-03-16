@@ -303,6 +303,9 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
   const isTypingSent = useRef(false);
 
   const isAtBottom = useRef(true);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [peerStatus, setPeerStatus] = useState<{ online: boolean; last_seen: string | null }>({
     online: !!chat.peer_online,
     last_seen: chat.peer_last_seen ?? null,
@@ -338,6 +341,7 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
     try {
       const res = await fetch(`${CHATS_URL}/messages?chat_id=${chat.id}`, { headers: apiHeaders(token) });
       const data = await res.json();
+      if (data.has_more !== undefined) setHasMore(data.has_more);
       if (data.messages) setMessages(prev => {
         const prevIds = new Set(prev.map(m => String(m.id)));
         const newIncoming = data.messages.filter((m: Message) => !prevIds.has(String(m.id)) && !m.out);
@@ -365,6 +369,29 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
       });
     } finally { if (!silent) setLoading(false); }
   }, [chat.id, token]);
+
+  const loadOlder = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    const container = scrollContainerRef.current;
+    const prevScrollHeight = container?.scrollHeight ?? 0;
+    try {
+      const firstId = messages[0]?.id;
+      if (!firstId || String(firstId).startsWith("opt-")) return;
+      const res = await fetch(`${CHATS_URL}/messages?chat_id=${chat.id}&before_id=${firstId}`, { headers: apiHeaders(token) });
+      const data = await res.json();
+      if (data.has_more !== undefined) setHasMore(data.has_more);
+      if (data.messages?.length) {
+        setMessages(prev => [...data.messages, ...prev]);
+        // restore scroll position after prepend
+        requestAnimationFrame(() => {
+          if (container) {
+            container.scrollTop = container.scrollHeight - prevScrollHeight;
+          }
+        });
+      }
+    } finally { setLoadingMore(false); }
+  }, [chat.id, token, hasMore, loadingMore, messages]);
 
   useEffect(() => { loadMessages(); }, [loadMessages]);
 
@@ -752,12 +779,32 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
       )}
 
       <div
+        ref={scrollContainerRef}
         className="flex-1 overflow-y-auto px-4 py-4 space-y-2"
         style={{ background: "radial-gradient(ellipse at top, rgba(0,119,182,0.04) 0%, transparent 60%)" }}
         onScroll={e => {
           const el = e.currentTarget;
           isAtBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+          if (el.scrollTop < 80 && hasMore && !loadingMore) loadOlder();
         }}>
+        {/* Load older indicator */}
+        {loadingMore && (
+          <div className="flex justify-center py-3 animate-fade-in">
+            <div className="flex items-center gap-2 px-4 py-2 rounded-full glass border border-white/10 text-xs text-muted-foreground">
+              <div className="w-3.5 h-3.5 border-2 border-sky-500/30 border-t-sky-500 rounded-full animate-spin" />
+              Загрузка истории...
+            </div>
+          </div>
+        )}
+        {hasMore && !loadingMore && (
+          <div className="flex justify-center py-1">
+            <button onClick={loadOlder}
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-full glass border border-white/10 text-xs text-muted-foreground hover:text-foreground hover:bg-white/5 transition-all">
+              <Icon name="ChevronsUp" size={13} />
+              Загрузить ещё
+            </button>
+          </div>
+        )}
         {loading && (
           <div className="flex justify-center py-8">
             <div className="w-6 h-6 border-2 border-sky-500/30 border-t-sky-500 rounded-full animate-spin" />
