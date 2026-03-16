@@ -290,6 +290,13 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchIdx, setSearchIdx] = useState(0);
+  const [showStats, setShowStats] = useState(false);
+  const [stats, setStats] = useState<{
+    total_messages: number; total_files: number; total_photos: number;
+    first_message_at: string | null; active_members: number;
+    member_count: number; days_active: number;
+  } | null>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
   const [pendingFile, setPendingFile] = useState<{ url: string; name: string; size: number; type: string } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [pickerMsgId, setPickerMsgId] = useState<number | string | null>(null);
@@ -516,6 +523,21 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
     } catch { /* keep optimistic */ }
   }
 
+  async function loadStats() {
+    if (stats || statsLoading) return;
+    setStatsLoading(true);
+    try {
+      const res = await fetch(`${CHATS_URL}/stats?chat_id=${chat.id}`, { headers: apiHeaders(token) });
+      const data = await res.json();
+      if (data.total_messages !== undefined) setStats(data);
+    } finally { setStatsLoading(false); }
+  }
+
+  function toggleStats() {
+    setShowStats(v => !v);
+    if (!stats) loadStats();
+  }
+
   async function editMessage(msgId: number | string, newText: string) {
     if (!newText.trim()) return;
     setEditingMsg(null);
@@ -695,6 +717,10 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
             className={`p-2 rounded-full transition-colors ${searchOpen ? "bg-blue-500/20 text-sky-400" : "hover:bg-white/10 text-muted-foreground"}`}>
             <Icon name="Search" size={18} />
           </button>
+          <button onClick={toggleStats}
+            className={`p-2 rounded-full transition-colors ${showStats ? "bg-blue-500/20 text-sky-400" : "hover:bg-white/10 text-muted-foreground"}`}>
+            <Icon name="ChartBar" size={18} />
+          </button>
           {!chat.is_group && (
             <>
               <button className="p-2 hover:bg-white/10 rounded-full transition-colors">
@@ -756,6 +782,49 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
           </div>
         )}
       </div>
+
+      {showStats && (
+        <div className="flex-shrink-0 px-4 py-3 glass border-t border-white/5 animate-fade-in">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Icon name="ChartBar" size={14} className="text-sky-400" />
+              <span className="text-xs font-semibold text-sky-400 uppercase tracking-wide">Статистика чата</span>
+            </div>
+            <button onClick={() => setShowStats(false)} className="p-1 hover:bg-white/10 rounded-full transition-colors">
+              <Icon name="X" size={14} className="text-muted-foreground" />
+            </button>
+          </div>
+          {statsLoading ? (
+            <div className="flex justify-center py-3">
+              <div className="w-5 h-5 border-2 border-sky-500/30 border-t-sky-500 rounded-full animate-spin" />
+            </div>
+          ) : stats ? (
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { icon: "MessageCircle", label: "Сообщений", value: stats.total_messages, color: "text-sky-400" },
+                { icon: "Image", label: "Фото", value: stats.total_photos, color: "text-cyan-400" },
+                { icon: "Paperclip", label: "Файлов", value: stats.total_files, color: "text-blue-400" },
+                { icon: "Users", label: "Участников", value: stats.member_count, color: "text-sky-400" },
+                { icon: "UserCheck", label: "Активных", value: stats.active_members, color: "text-green-400" },
+                { icon: "CalendarDays", label: "Дней", value: stats.days_active, color: "text-cyan-400" },
+              ].map(s => (
+                <div key={s.label} className="glass rounded-2xl p-3 flex flex-col items-center gap-1 border border-white/5">
+                  <Icon name={s.icon as Parameters<typeof Icon>[0]["name"]} size={16} className={s.color} />
+                  <span className="text-base font-golos font-black text-foreground">{s.value.toLocaleString("ru")}</span>
+                  <span className="text-[10px] text-muted-foreground leading-tight text-center">{s.label}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground text-center py-2">Нет данных</p>
+          )}
+          {stats?.first_message_at && (
+            <p className="text-[11px] text-muted-foreground text-center mt-2">
+              Первое сообщение: {new Date(stats.first_message_at).toLocaleDateString("ru", { day: "numeric", month: "long", year: "numeric" })}
+            </p>
+          )}
+        </div>
+      )}
 
       {searchOpen && (
         <div className="flex-shrink-0 px-3 py-2 glass border-t border-white/5 animate-fade-in">

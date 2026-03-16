@@ -463,6 +463,42 @@ def handler(event: dict, context) -> dict:
             typists = [r[0] for r in rows]
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"typists": typists})}
 
+        # GET /stats — статистика чата
+        if method == "GET" and "stats" in path:
+            params = event.get("queryStringParameters") or {}
+            chat_id = params.get("chat_id")
+            if not chat_id:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id required"})}
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT 1 FROM {SCHEMA}.chat_members WHERE chat_id = %s AND user_id = %s", (chat_id, user_id))
+                if not cur.fetchone():
+                    return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Нет доступа"})}
+                cur.execute(f"""
+                    SELECT
+                        COUNT(*) FILTER (WHERE hidden_at IS NULL) AS total_messages,
+                        COUNT(*) FILTER (WHERE hidden_at IS NULL AND file_url IS NOT NULL) AS total_files,
+                        COUNT(*) FILTER (WHERE hidden_at IS NULL AND file_type LIKE 'image/%%') AS total_photos,
+                        MIN(created_at) AS first_message_at,
+                        COUNT(DISTINCT sender_id) AS active_members
+                    FROM {SCHEMA}.messages
+                    WHERE chat_id = %s
+                """, (chat_id,))
+                r = cur.fetchone()
+                cur.execute(f"SELECT COUNT(*) FROM {SCHEMA}.chat_members WHERE chat_id = %s", (chat_id,))
+                member_count = cur.fetchone()[0]
+            from datetime import datetime, timezone
+            first_at = r[3]
+            days_active = (datetime.now(timezone.utc) - first_at).days + 1 if first_at else 0
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({
+                "total_messages": int(r[0]),
+                "total_files": int(r[1]),
+                "total_photos": int(r[2]),
+                "first_message_at": first_at.isoformat() if first_at else None,
+                "active_members": int(r[4]),
+                "member_count": int(member_count),
+                "days_active": days_active,
+            })}
+
         # GET /members — список участников чата с ролями
         if method == "GET" and "members" in path:
             params = event.get("queryStringParameters") or {}
