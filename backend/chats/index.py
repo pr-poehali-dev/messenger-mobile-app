@@ -1,6 +1,10 @@
-"""Чаты: список чатов пользователя, создание чата, получение сообщений, отправка"""
+"""Чаты: список чатов пользователя, создание чата, получение сообщений, отправка, загрузка файлов"""
 import json
 import os
+import base64
+import mimetypes
+import uuid
+import boto3
 import psycopg2
 
 SCHEMA = "t_p22534578_messenger_mobile_app"
@@ -95,7 +99,8 @@ def handler(event: dict, context) -> dict:
                     return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Нет доступа"})}
 
                 cur.execute(f"""
-                    SELECT m.id, m.sender_id, u.name, m.text, m.is_read, m.created_at
+                    SELECT m.id, m.sender_id, u.name, m.text, m.is_read, m.created_at,
+                           m.file_url, m.file_name, m.file_size, m.file_type
                     FROM {SCHEMA}.messages m
                     JOIN {SCHEMA}.users u ON u.id = m.sender_id
                     WHERE m.chat_id = %s
@@ -114,37 +119,84 @@ def handler(event: dict, context) -> dict:
                 "id": r[0],
                 "sender_id": r[1],
                 "sender_name": r[2],
-                "text": r[3],
+                "text": r[3] or "",
                 "is_read": r[4],
                 "time": r[5].strftime("%H:%M"),
                 "out": r[1] == user_id,
+                "file_url": r[6],
+                "file_name": r[7],
+                "file_size": r[8],
+                "file_type": r[9],
             } for r in rows]
 
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"messages": messages})}
 
-        # POST /send — отправить сообщение
+        # POST /send — отправить сообщение (текст или файл)
         if method == "POST" and "send" in path:
             body = json.loads(event.get("body") or "{}")
             chat_id = body.get("chat_id")
             text = (body.get("text") or "").strip()
-            if not chat_id or not text:
-                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id и text обязательны"})}
+            file_url = body.get("file_url") or None
+            file_name = body.get("file_name") or None
+            file_size = body.get("file_size") or None
+            file_type = body.get("file_type") or None
+
+            if not chat_id or (not text and not file_url):
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id и text или file_url обязательны"})}
 
             with conn.cursor() as cur:
                 cur.execute(f"SELECT 1 FROM {SCHEMA}.chat_members WHERE chat_id = %s AND user_id = %s", (chat_id, user_id))
                 if not cur.fetchone():
                     return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Нет доступа"})}
                 cur.execute(
-                    f"INSERT INTO {SCHEMA}.messages (chat_id, sender_id, text) VALUES (%s, %s, %s) RETURNING id, created_at",
-                    (chat_id, user_id, text)
+                    f"""INSERT INTO {SCHEMA}.messages (chat_id, sender_id, text, file_url, file_name, file_size, file_type)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id, created_at""",
+                    (chat_id, user_id, text or "", file_url, file_name, file_size, file_type)
                 )
                 msg_id, created_at = cur.fetchone()
             conn.commit()
             return {
                 "statusCode": 200, "headers": cors,
                 "body": json.dumps({
-                    "message": {"id": msg_id, "sender_id": user_id, "text": text, "is_read": False,
-                                "time": created_at.strftime("%H:%M"), "out": True}
+                    "message": {
+                        "id": msg_id, "sender_id": user_id, "text": text or "", "is_read": False,
+                        "time": created_at.strftime("%H:%M"), "out": True,
+                        "file_url": file_url, "file_name": file_name,
+                        "file_size": file_size, "file_type": file_type,
+                    }
+                })
+            }
+
+        # POST /upload — загрузить файл в S3
+        if method == "POST" and "upload" in path:
+            body = json.loads(event.get("body") or "{}")
+            file_b64 = body.get("file")
+            file_name = body.get("file_name", "file")
+            file_type = body.get("file_type", "application/octet-stream")
+            if not file_b64:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "file required"})}
+
+            file_data = base64.b64decode(file_b64)
+            file_size = len(file_data)
+            ext = mimetypes.guess_extension(file_type) or ""
+            key = f"chat-files/{uuid.uuid4().hex}{ext}"
+
+            s3 = boto3.client(
+                "s3",
+                endpoint_url="https://bucket.poehali.dev",
+                aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+                aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+            )
+            s3.put_object(Bucket="files", Key=key, Body=file_data, ContentType=file_type)
+            cdn_url = f"https://cdn.poehali.dev/projects/{os.environ['AWS_ACCESS_KEY_ID']}/bucket/{key}"
+
+            return {
+                "statusCode": 200, "headers": cors,
+                "body": json.dumps({
+                    "file_url": cdn_url,
+                    "file_name": file_name,
+                    "file_size": file_size,
+                    "file_type": file_type,
                 })
             }
 

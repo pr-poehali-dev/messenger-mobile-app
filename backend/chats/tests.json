@@ -6,6 +6,14 @@
       "path": "/",
       "expectedStatus": 200,
       "bodyMatcher": "partial"
+    },
+    {
+      "name": "Upload no file - 400",
+      "method": "POST",
+      "path": "/upload",
+      "body": {},
+      "expectedStatus": 400,
+      "bodyMatcher": "partial"
     }
   ]
 }

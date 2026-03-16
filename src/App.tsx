@@ -32,6 +32,10 @@ interface Message {
   out: boolean;
   is_read: boolean;
   sender_name?: string;
+  file_url?: string | null;
+  file_name?: string | null;
+  file_size?: number | null;
+  file_type?: string | null;
 }
 
 interface Chat {
@@ -275,6 +279,9 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchIdx, setSearchIdx] = useState(0);
+  const [pendingFile, setPendingFile] = useState<{ url: string; name: string; size: number; type: string } | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const msgRefs = useRef<Record<string | number, HTMLDivElement | null>>({});
   const endRef = useRef<HTMLDivElement>(null);
@@ -376,6 +383,29 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
     }
   }, [messages]);
 
+  async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+    setUploading(true);
+    try {
+      const b64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve((reader.result as string).split(",")[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const res = await fetch(`${CHATS_URL}/upload`, {
+        method: "POST", headers: apiHeaders(token),
+        body: JSON.stringify({ file: b64, file_name: file.name, file_type: file.type }),
+      });
+      const data = await res.json();
+      if (data.file_url) {
+        setPendingFile({ url: data.file_url, name: data.file_name, size: data.file_size, type: data.file_type });
+      }
+    } finally { setUploading(false); }
+  }
+
   const searchMatches = searchQuery.trim()
     ? messages.filter(m => m.text.toLowerCase().includes(searchQuery.toLowerCase()))
     : [];
@@ -421,19 +451,25 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
   }, [searchQuery]);
 
   async function send() {
-    if (!text.trim()) return;
+    const t = text.trim();
+    const pf = pendingFile;
+    if (!t && !pf) return;
     const optimistic: Message = {
-      id: `opt-${Date.now()}`, text: text.trim(),
+      id: `opt-${Date.now()}`, text: t,
       time: new Date().toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" }),
       out: true, is_read: false,
+      file_url: pf?.url, file_name: pf?.name, file_size: pf?.size, file_type: pf?.type,
     };
     setMessages(prev => [...prev, optimistic]);
-    const t = text.trim();
     setText("");
+    setPendingFile(null);
     try {
       const res = await fetch(`${CHATS_URL}/send`, {
         method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ chat_id: chat.id, text: t }),
+        body: JSON.stringify({
+          chat_id: chat.id, text: t,
+          file_url: pf?.url, file_name: pf?.name, file_size: pf?.size, file_type: pf?.type,
+        }),
       });
       const data = await res.json();
       if (data.message) {
@@ -622,7 +658,30 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
                 {!msg.out && chat.is_group && msg.sender_name && (
                   <div className="text-[10px] text-purple-400 font-semibold mb-1">{msg.sender_name}</div>
                 )}
-                <p className="text-sm text-white leading-relaxed">{highlightText(msg.text)}</p>
+                {/* File attachment */}
+                {msg.file_url && msg.file_type?.startsWith("image/") && (
+                  <a href={msg.file_url} target="_blank" rel="noopener noreferrer"
+                    className="block mb-1.5 rounded-xl overflow-hidden border border-white/10 max-w-[220px]">
+                    <img src={msg.file_url} alt={msg.file_name || "фото"}
+                      className="w-full object-cover max-h-48 hover:opacity-90 transition-opacity" />
+                  </a>
+                )}
+                {msg.file_url && !msg.file_type?.startsWith("image/") && (
+                  <a href={msg.file_url} target="_blank" rel="noopener noreferrer" download={msg.file_name || true}
+                    className="flex items-center gap-2.5 mb-1.5 px-3 py-2.5 rounded-xl bg-black/20 hover:bg-black/30 transition-colors border border-white/10 max-w-[240px]">
+                    <div className="w-8 h-8 rounded-lg bg-violet-500/20 flex items-center justify-center flex-shrink-0">
+                      <Icon name="FileDown" size={15} className="text-violet-400" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-white truncate">{msg.file_name || "Файл"}</p>
+                      {msg.file_size && (
+                        <p className="text-[10px] text-white/50">{(msg.file_size / 1024).toFixed(1)} КБ</p>
+                      )}
+                    </div>
+                    <Icon name="Download" size={13} className="text-white/50 flex-shrink-0" />
+                  </a>
+                )}
+                {msg.text && <p className="text-sm text-white leading-relaxed">{highlightText(msg.text)}</p>}
                 <div className={`flex items-center gap-1 mt-1 ${msg.out ? "justify-end" : "justify-start"}`}>
                   <span className="text-[10px] text-white/50">{msg.time}</span>
                   {msg.out && <Icon name={msg.is_read ? "CheckCheck" : "Check"} size={12} className={msg.is_read ? "text-cyan-400" : "text-white/50"} />}
@@ -650,20 +709,47 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
         </div>
       )}
 
-      <div className="flex-shrink-0 glass border-t border-white/5 px-4 py-3">
+      <div className="flex-shrink-0 glass border-t border-white/5 px-4 pt-2 pb-3 space-y-2">
+        {/* Pending file preview */}
+        {pendingFile && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-violet-500/10 border border-violet-500/20 animate-fade-in">
+            {pendingFile.type.startsWith("image/") ? (
+              <img src={pendingFile.url} alt={pendingFile.name}
+                className="w-10 h-10 rounded-lg object-cover flex-shrink-0 border border-white/10" />
+            ) : (
+              <div className="w-10 h-10 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0">
+                <Icon name="FileText" size={18} className="text-violet-400" />
+              </div>
+            )}
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium text-foreground truncate">{pendingFile.name}</p>
+              <p className="text-[10px] text-muted-foreground">{(pendingFile.size / 1024).toFixed(1)} КБ</p>
+            </div>
+            <button onClick={() => setPendingFile(null)}
+              className="p-1 rounded-full hover:bg-white/10 transition-colors flex-shrink-0">
+              <Icon name="X" size={14} className="text-muted-foreground" />
+            </button>
+          </div>
+        )}
+
         <div className="flex items-end gap-2">
-          <button className="p-2 hover:bg-white/10 rounded-full transition-colors flex-shrink-0">
-            <Icon name="Plus" size={20} className="text-muted-foreground" />
+          <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileSelect}
+            accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.zip,.txt,.mp4,.mp3" />
+          <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
+            className={`p-2 rounded-full transition-all flex-shrink-0 ${uploading ? "opacity-50" : "hover:bg-white/10"}`}>
+            {uploading
+              ? <div className="w-5 h-5 border-2 border-violet-400/30 border-t-violet-400 rounded-full animate-spin" />
+              : <Icon name="Paperclip" size={20} className="text-muted-foreground" />}
           </button>
           <textarea value={text} onChange={e => { setText(e.target.value); sendTyping(); }}
             onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
             placeholder="Сообщение..." rows={1}
             className="flex-1 bg-secondary/60 border border-white/10 rounded-2xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:border-purple-500/50 transition-all"
             style={{ maxHeight: "100px" }} />
-          <button onClick={send}
-            className={`p-3 rounded-full transition-all flex-shrink-0 ${text.trim()
+          <button onClick={send} disabled={!text.trim() && !pendingFile}
+            className={`p-3 rounded-full transition-all flex-shrink-0 ${(text.trim() || pendingFile)
               ? "bg-gradient-to-br from-violet-500 to-purple-600 hover:scale-105 shadow-[0_0_20px_rgba(168,85,247,0.5)]"
-              : "bg-secondary"}`}>
+              : "bg-secondary opacity-50"}`}>
             <Icon name="Send" size={16} className="text-white" />
           </button>
         </div>
