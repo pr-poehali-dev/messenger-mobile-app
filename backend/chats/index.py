@@ -146,7 +146,8 @@ def handler(event: dict, context) -> dict:
                         SELECT m.id, m.sender_id, u.name, m.text, m.is_read, m.created_at,
                                m.file_url, m.file_name, m.file_size, m.file_type,
                                m.is_edited, m.hidden_at,
-                               m.reply_to_id, m.reply_to_text, m.reply_to_name
+                               m.reply_to_id, m.reply_to_text, m.reply_to_name,
+                               m.is_pinned
                         FROM {SCHEMA}.messages m
                         JOIN {SCHEMA}.users u ON u.id = m.sender_id
                         WHERE m.chat_id = %s AND m.id < %s
@@ -159,7 +160,8 @@ def handler(event: dict, context) -> dict:
                         SELECT m.id, m.sender_id, u.name, m.text, m.is_read, m.created_at,
                                m.file_url, m.file_name, m.file_size, m.file_type,
                                m.is_edited, m.hidden_at,
-                               m.reply_to_id, m.reply_to_text, m.reply_to_name
+                               m.reply_to_id, m.reply_to_text, m.reply_to_name,
+                               m.is_pinned
                         FROM {SCHEMA}.messages m
                         JOIN {SCHEMA}.users u ON u.id = m.sender_id
                         WHERE m.chat_id = %s
@@ -217,9 +219,23 @@ def handler(event: dict, context) -> dict:
                 "reply_to_id": r[12],
                 "reply_to_text": r[13],
                 "reply_to_name": r[14],
+                "is_pinned": r[15],
             } for r in rows]
 
-            return {"statusCode": 200, "headers": cors, "body": json.dumps({"messages": messages, "has_more": has_more})}
+            # Load pinned messages (latest pinned, not deleted)
+            with conn.cursor() as cur2:
+                cur2.execute(f"""
+                    SELECT m.id, m.text, u.name, m.file_type
+                    FROM {SCHEMA}.messages m
+                    JOIN {SCHEMA}.users u ON u.id = m.sender_id
+                    WHERE m.chat_id = %s AND m.is_pinned = TRUE AND m.hidden_at IS NULL
+                    ORDER BY m.pinned_at DESC
+                    LIMIT 1
+                """, (chat_id,))
+                pr = cur2.fetchone()
+            pinned = {"id": pr[0], "text": pr[1] or "", "sender_name": pr[2], "file_type": pr[3]} if pr else None
+
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"messages": messages, "has_more": has_more, "pinned": pinned})}
 
         # POST /send — отправить сообщение (текст или файл)
         if method == "POST" and "send" in path:
@@ -277,6 +293,31 @@ def handler(event: dict, context) -> dict:
                     }
                 })
             }
+
+        # POST /pin-message — закрепить / открепить сообщение (только admin или для личного чата)
+        if method == "POST" and "pin-message" in path:
+            body = json.loads(event.get("body") or "{}")
+            message_id = body.get("message_id")
+            pin = body.get("pin", True)  # True = закрепить, False = открепить
+            if not message_id:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "message_id обязателен"})}
+            with conn.cursor() as cur:
+                # Check membership and role
+                cur.execute(f"""
+                    SELECT cm.role FROM {SCHEMA}.messages m
+                    JOIN {SCHEMA}.chat_members cm ON cm.chat_id = m.chat_id AND cm.user_id = %s
+                    JOIN {SCHEMA}.chats c ON c.id = m.chat_id
+                    WHERE m.id = %s
+                """, (user_id, message_id))
+                row = cur.fetchone()
+                if not row:
+                    return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Нет доступа"})}
+                if pin:
+                    cur.execute(f"UPDATE {SCHEMA}.messages SET is_pinned = TRUE, pinned_at = NOW() WHERE id = %s", (message_id,))
+                else:
+                    cur.execute(f"UPDATE {SCHEMA}.messages SET is_pinned = FALSE, pinned_at = NULL WHERE id = %s", (message_id,))
+            conn.commit()
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "pinned": pin})}
 
         # POST /edit-message — редактировать своё сообщение
         if method == "POST" and "edit-message" in path:

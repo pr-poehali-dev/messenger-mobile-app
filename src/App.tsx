@@ -41,6 +41,7 @@ interface Message {
   reactions?: Reaction[];
   is_edited?: boolean;
   is_deleted?: boolean;
+  is_pinned?: boolean;
   date?: string;
   reply_to_id?: number | null;
   reply_to_text?: string | null;
@@ -291,6 +292,7 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchIdx, setSearchIdx] = useState(0);
   const [showStats, setShowStats] = useState(false);
+  const [pinnedMsg, setPinnedMsg] = useState<{ id: number; text: string; sender_name: string; file_type: string | null } | null>(null);
   const [stats, setStats] = useState<{
     total_messages: number; total_files: number; total_photos: number;
     first_message_at: string | null; active_members: number;
@@ -350,6 +352,7 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
       const res = await fetch(`${CHATS_URL}/messages?chat_id=${chat.id}`, { headers: apiHeaders(token) });
       const data = await res.json();
       if (data.has_more !== undefined) setHasMore(data.has_more);
+      if ("pinned" in data) setPinnedMsg(data.pinned);
       if (data.messages) setMessages(prev => {
         const prevIds = new Set(prev.map(m => String(m.id)));
         const newIncoming = data.messages.filter((m: Message) => !prevIds.has(String(m.id)) && !m.out);
@@ -521,6 +524,21 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
         setMessages(prev => prev.map(m => m.id === msgId ? { ...m, reactions: data.reactions } : m));
       }
     } catch { /* keep optimistic */ }
+  }
+
+  async function pinMessage(msgId: number | string, pin: boolean) {
+    setMenuMsgId(null);
+    const msg = messages.find(m => m.id === msgId);
+    if (pin && msg) {
+      setPinnedMsg({ id: Number(msgId), text: msg.text, sender_name: msg.sender_name || "Вы", file_type: msg.file_type ?? null });
+    } else if (!pin) {
+      setPinnedMsg(null);
+    }
+    setMessages(prev => prev.map(m => m.id === msgId ? { ...m, is_pinned: pin } : pin ? { ...m, is_pinned: false } : m));
+    await fetch(`${CHATS_URL}/pin-message`, {
+      method: "POST", headers: apiHeaders(token),
+      body: JSON.stringify({ message_id: msgId, pin }),
+    });
   }
 
   async function loadStats() {
@@ -783,6 +801,30 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
         )}
       </div>
 
+      {/* Pinned message banner */}
+      {pinnedMsg && (
+        <div className="flex-shrink-0 flex items-center gap-2 px-3 py-2 glass border-t border-white/5 animate-fade-in cursor-pointer hover:bg-white/5 transition-colors group"
+          onClick={() => {
+            const el = msgRefs.current[pinnedMsg.id];
+            if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+          }}>
+          <div className="w-0.5 h-8 rounded-full bg-sky-400 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] font-semibold text-sky-400 flex items-center gap-1">
+              <Icon name="Pin" size={10} />
+              Закреплено · {pinnedMsg.sender_name}
+            </p>
+            <p className="text-xs text-muted-foreground truncate">
+              {pinnedMsg.file_type?.startsWith("image/") ? "📷 Фото" : pinnedMsg.file_type ? "📎 Файл" : pinnedMsg.text || "Сообщение"}
+            </p>
+          </div>
+          <button onClick={e => { e.stopPropagation(); pinMessage(pinnedMsg.id, false); }}
+            className="opacity-0 group-hover:opacity-100 p-1 hover:bg-white/10 rounded-full transition-all flex-shrink-0">
+            <Icon name="X" size={13} className="text-muted-foreground" />
+          </button>
+        </div>
+      )}
+
       {showStats && (
         <div className="flex-shrink-0 px-4 py-3 glass border-t border-white/5 animate-fade-in">
           <div className="flex items-center justify-between mb-3">
@@ -1008,6 +1050,14 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
                   <Icon name="Reply" size={12} className="text-sky-400" />
                   Ответить
                 </button>
+                {!msg.is_deleted && (
+                  <button onClick={() => pinMessage(msg.id, !msg.is_pinned)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl glass border text-xs transition-all
+                      ${msg.is_pinned ? "border-amber-500/20 text-amber-400 hover:bg-amber-500/10" : "border-white/10 text-foreground hover:bg-white/10"}`}>
+                    <Icon name="Pin" size={12} className={msg.is_pinned ? "text-amber-400" : "text-sky-400"} />
+                    {msg.is_pinned ? "Открепить" : "Закрепить"}
+                  </button>
+                )}
                 {msg.out && !msg.is_deleted && (
                   <button onClick={() => { setMenuMsgId(null); setEditingMsg({ id: msg.id, text: msg.text }); }}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl glass border border-white/10 text-xs text-foreground hover:bg-white/10 transition-all">
