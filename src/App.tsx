@@ -25,6 +25,8 @@ interface User {
   status?: string;
 }
 
+interface Reaction { emoji: string; count: number; i_reacted: boolean; }
+
 interface Message {
   id: number | string;
   text: string;
@@ -36,6 +38,7 @@ interface Message {
   file_name?: string | null;
   file_size?: number | null;
   file_type?: string | null;
+  reactions?: Reaction[];
 }
 
 interface Chat {
@@ -281,6 +284,7 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
   const [searchIdx, setSearchIdx] = useState(0);
   const [pendingFile, setPendingFile] = useState<{ url: string; name: string; size: number; type: string } | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [pickerMsgId, setPickerMsgId] = useState<number | string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const msgRefs = useRef<Record<string | number, HTMLDivElement | null>>({});
@@ -382,6 +386,37 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
       endRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [messages]);
+
+  const EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🔥", "👏", "🎉"];
+
+  async function sendReaction(msgId: number | string, emoji: string) {
+    setPickerMsgId(null);
+    setMessages(prev => prev.map(m => {
+      if (m.id !== msgId) return m;
+      const existing = (m.reactions || []).find(r => r.emoji === emoji);
+      let updated: Reaction[];
+      if (existing?.i_reacted) {
+        updated = (m.reactions || [])
+          .map(r => r.emoji === emoji ? { ...r, count: r.count - 1, i_reacted: false } : r)
+          .filter(r => r.count > 0);
+      } else if (existing) {
+        updated = (m.reactions || []).map(r => r.emoji === emoji ? { ...r, count: r.count + 1, i_reacted: true } : r);
+      } else {
+        updated = [...(m.reactions || []), { emoji, count: 1, i_reacted: true }];
+      }
+      return { ...m, reactions: updated };
+    }));
+    try {
+      const res = await fetch(`${CHATS_URL}/react`, {
+        method: "POST", headers: apiHeaders(token),
+        body: JSON.stringify({ message_id: msgId, emoji }),
+      });
+      const data = await res.json();
+      if (data.reactions !== undefined) {
+        setMessages(prev => prev.map(m => m.id === msgId ? { ...m, reactions: data.reactions } : m));
+      }
+    } catch { /* keep optimistic */ }
+  }
 
   async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -652,8 +687,9 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
           return (
             <div key={msg.id}
               ref={el => { msgRefs.current[msg.id] = el; }}
-              className={`flex ${msg.out ? "justify-end" : "justify-start"} animate-fade-in`}
+              className={`flex flex-col ${msg.out ? "items-end" : "items-start"} animate-fade-in`}
               style={{ animationDelay: `${i * 0.02}s` }}>
+              <div className={`flex items-end gap-1 group ${msg.out ? "flex-row-reverse" : "flex-row"}`}>
               <div className={`max-w-[75%] px-4 py-2.5 transition-all ${msg.out ? "msg-bubble-out" : "msg-bubble-in"} ${isActive ? "ring-2 ring-yellow-400/60" : isMatch ? "ring-1 ring-yellow-400/25" : ""}`}>
                 {!msg.out && chat.is_group && msg.sender_name && (
                   <div className="text-[10px] text-purple-400 font-semibold mb-1">{msg.sender_name}</div>
@@ -687,9 +723,49 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
                   {msg.out && <Icon name={msg.is_read ? "CheckCheck" : "Check"} size={12} className={msg.is_read ? "text-cyan-400" : "text-white/50"} />}
                 </div>
               </div>
+
+              {/* Reaction picker trigger */}
+              <button
+                onClick={() => setPickerMsgId(pickerMsgId === msg.id ? null : msg.id)}
+                className={`self-end mb-1 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-full hover:bg-white/10 flex-shrink-0 ${msg.out ? "order-first mr-1" : "ml-1"}`}>
+                <span className="text-sm leading-none">😊</span>
+              </button>
             </div>
-          );
-        })}
+
+            {/* Reaction picker popup */}
+            {pickerMsgId === msg.id && (
+              <div className={`flex items-center gap-1 px-2 py-1.5 rounded-2xl glass border border-white/10 shadow-xl animate-fade-in mb-1 w-fit ${msg.out ? "self-end" : "self-start"}`}>
+                {EMOJIS.map(e => {
+                  const r = (msg.reactions || []).find(rx => rx.emoji === e);
+                  return (
+                    <button key={e} onClick={() => sendReaction(msg.id, e)}
+                      className={`text-lg leading-none p-1 rounded-xl transition-all hover:scale-125 active:scale-95 ${r?.i_reacted ? "bg-violet-500/25" : "hover:bg-white/10"}`}>
+                      {e}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Reactions display */}
+            {(msg.reactions || []).length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-1">
+                {(msg.reactions || []).map(r => (
+                  <button key={r.emoji} onClick={() => sendReaction(msg.id, r.emoji)}
+                    className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border transition-all hover:scale-105 active:scale-95
+                      ${r.i_reacted
+                        ? "bg-violet-500/25 border-violet-500/40 text-white"
+                        : "bg-white/5 border-white/10 text-white/70 hover:bg-white/10"}`}>
+                    <span className="text-sm leading-none">{r.emoji}</span>
+                    <span className="font-medium">{r.count}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+        }
+        )}
         <div ref={endRef} />
       </div>
 

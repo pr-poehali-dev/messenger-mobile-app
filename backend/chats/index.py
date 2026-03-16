@@ -108,6 +108,26 @@ def handler(event: dict, context) -> dict:
                     LIMIT 100
                 """, (chat_id,))
                 rows = cur.fetchall()
+
+                # Load reactions for all messages
+                msg_ids = [r[0] for r in rows]
+                reactions_map = {}
+                if msg_ids:
+                    in_clause = ",".join(str(i) for i in msg_ids)
+                    cur.execute(f"""
+                        SELECT message_id, emoji, COUNT(*) as cnt,
+                               BOOL_OR(user_id = {int(user_id)}) as i_reacted
+                        FROM {SCHEMA}.message_reactions
+                        WHERE message_id IN ({in_clause}) AND emoji != ''
+                        GROUP BY message_id, emoji
+                        ORDER BY message_id, MIN(created_at)
+                    """)
+                    for rr in cur.fetchall():
+                        mid = rr[0]
+                        if mid not in reactions_map:
+                            reactions_map[mid] = []
+                        reactions_map[mid].append({"emoji": rr[1], "count": int(rr[2]), "i_reacted": rr[3]})
+
                 # Mark as read
                 cur.execute(f"""
                     UPDATE {SCHEMA}.messages SET is_read = TRUE
@@ -127,6 +147,7 @@ def handler(event: dict, context) -> dict:
                 "file_name": r[7],
                 "file_size": r[8],
                 "file_type": r[9],
+                "reactions": reactions_map.get(r[0], []),
             } for r in rows]
 
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"messages": messages})}
@@ -166,6 +187,63 @@ def handler(event: dict, context) -> dict:
                     }
                 })
             }
+
+        # POST /react — поставить или снять реакцию
+        if method == "POST" and "react" in path:
+            body = json.loads(event.get("body") or "{}")
+            message_id = body.get("message_id")
+            emoji = (body.get("emoji") or "").strip()
+            if not message_id or not emoji:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "message_id и emoji обязательны"})}
+
+            ALLOWED = {"👍","❤️","😂","😮","😢","🔥","👏","🎉"}
+            if emoji not in ALLOWED:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Недопустимый эмодзи"})}
+
+            with conn.cursor() as cur:
+                # Verify user has access to the chat containing this message
+                cur.execute(f"""
+                    SELECT 1 FROM {SCHEMA}.messages m
+                    JOIN {SCHEMA}.chat_members cm ON cm.chat_id = m.chat_id AND cm.user_id = %s
+                    WHERE m.id = %s
+                """, (user_id, message_id))
+                if not cur.fetchone():
+                    return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Нет доступа"})}
+
+                # Toggle: if exists — remove, if not — add
+                cur.execute(f"""
+                    SELECT id FROM {SCHEMA}.message_reactions
+                    WHERE message_id = %s AND user_id = %s AND emoji = %s
+                """, (message_id, user_id, emoji))
+                existing = cur.fetchone()
+                if existing:
+                    cur.execute(f"UPDATE {SCHEMA}.message_reactions SET emoji = emoji WHERE id = %s RETURNING id", (existing[0],))
+                    # We use UPDATE as a no-op since DELETE is not allowed; mark as "toggled off" via a sentinel
+                    # Actually just overwrite with same value and return removed=True
+                    # The real toggle logic: we re-insert same row to get conflict → we delete via trick
+                    # Since DELETE is blocked, we store a "removed" flag by setting emoji to empty string
+                    cur.execute(f"UPDATE {SCHEMA}.message_reactions SET emoji = '' WHERE id = %s", (existing[0],))
+                    toggled = "removed"
+                else:
+                    cur.execute(f"""
+                        INSERT INTO {SCHEMA}.message_reactions (message_id, user_id, emoji)
+                        VALUES (%s, %s, %s)
+                        ON CONFLICT (message_id, user_id, emoji) DO NOTHING
+                    """, (message_id, emoji if emoji else emoji, emoji))
+                    toggled = "added"
+
+                # Get fresh reaction counts (exclude empty/removed)
+                cur.execute(f"""
+                    SELECT emoji, COUNT(*) as cnt,
+                           BOOL_OR(user_id = {int(user_id)}) as i_reacted
+                    FROM {SCHEMA}.message_reactions
+                    WHERE message_id = %s AND emoji != ''
+                    GROUP BY emoji
+                    ORDER BY MIN(created_at)
+                """, (message_id,))
+                reactions = [{"emoji": rr[0], "count": int(rr[1]), "i_reacted": rr[2]} for rr in cur.fetchall()]
+            conn.commit()
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"reactions": reactions, "toggled": toggled})}
 
         # POST /upload — загрузить файл в S3
         if method == "POST" and "upload" in path:
