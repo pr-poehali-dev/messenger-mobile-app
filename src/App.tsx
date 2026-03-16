@@ -830,7 +830,7 @@ function ContactsTab({ token }: { token: string }) {
   );
 }
 
-function SettingsTab({ onLogout }: { onLogout: () => void }) {
+function SettingsTab({ onLogout, onTestSound }: { onLogout: () => void; onTestSound: () => void }) {
   const [notif, setNotif] = useState(true);
   const [readR, setReadR] = useState(true);
   const [dark, setDark] = useState(true);
@@ -910,7 +910,11 @@ function SettingsTab({ onLogout }: { onLogout: () => void }) {
               </button>
             )}
             {notifPerm === "granted" && (
-              <div className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0 animate-pulse-dot" />
+              <button onClick={onTestSound}
+                className="flex-shrink-0 px-3 py-1.5 rounded-xl bg-green-500/15 border border-green-500/20 text-green-400 text-xs font-semibold hover:bg-green-500/25 transition-all flex items-center gap-1.5">
+                <Icon name="Volume2" size={12} />
+                Тест
+              </button>
             )}
           </div>
         </div>
@@ -964,9 +968,36 @@ export default function App() {
     }
   }, []);
 
+  const playSound = useCallback(() => {
+    try {
+      const AudioCtx = window.AudioContext || (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      // Two-tone pop: short high note → short low note
+      const notes = [
+        { freq: 880, start: 0,    dur: 0.08, gain: 0.18 },
+        { freq: 660, start: 0.09, dur: 0.12, gain: 0.12 },
+      ];
+      notes.forEach(({ freq, start, dur, gain }) => {
+        const osc = ctx.createOscillator();
+        const env = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        env.gain.setValueAtTime(0, ctx.currentTime + start);
+        env.gain.linearRampToValueAtTime(gain, ctx.currentTime + start + 0.01);
+        env.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + dur);
+        osc.connect(env);
+        env.connect(ctx.destination);
+        osc.start(ctx.currentTime + start);
+        osc.stop(ctx.currentTime + start + dur + 0.01);
+      });
+      setTimeout(() => ctx.close(), 500);
+    } catch { /* ignore */ }
+  }, []);
+
   const showNotification = useCallback((title: string, body: string) => {
     if (!("Notification" in window) || Notification.permission !== "granted") return;
-    if (document.visibilityState === "visible") return; // already looking at the app
+    if (document.visibilityState === "visible") return;
     try {
       new Notification(title, {
         body,
@@ -990,13 +1021,14 @@ export default function App() {
         newChats.forEach(c => {
           const prev = prevUnreadRef.current[c.id] ?? c.unread;
           if (c.unread > prev) {
+            playSound();
             showNotification(`💬 ${c.name}`, c.last_msg || "Новое сообщение");
           }
           prevUnreadRef.current[c.id] = c.unread;
         });
       })
       .catch(() => {});
-  }, [token, showNotification]);
+  }, [token, showNotification, playSound]);
 
   useEffect(() => { refreshBadge(); }, [refreshBadge, tab]);
 
@@ -1048,7 +1080,7 @@ export default function App() {
     calls: <CallsTab />,
     status: <StatusTab user={user} />,
     profile: <ProfileTab user={user} onLogout={handleLogout} />,
-    settings: <SettingsTab onLogout={handleLogout} />,
+    settings: <SettingsTab onLogout={handleLogout} onTestSound={playSound} />,
   };
 
   return (
