@@ -834,6 +834,18 @@ function SettingsTab({ onLogout }: { onLogout: () => void }) {
   const [notif, setNotif] = useState(true);
   const [readR, setReadR] = useState(true);
   const [dark, setDark] = useState(true);
+  const [notifPerm, setNotifPerm] = useState<NotificationPermission>(
+    "Notification" in window ? Notification.permission : "denied"
+  );
+
+  async function requestNotifPermission() {
+    if (!("Notification" in window)) return;
+    const perm = await Notification.requestPermission();
+    setNotifPerm(perm);
+    if (perm === "granted") {
+      new Notification("Pulse", { body: "Уведомления включены! 🚀", icon: "/favicon.svg" });
+    }
+  }
 
   const sections = [
     { title: "Уведомления", items: [
@@ -874,6 +886,35 @@ function SettingsTab({ onLogout }: { onLogout: () => void }) {
             </div>
           </div>
         ))}
+        {/* Notification permission block */}
+        <div className="animate-fade-in" style={{ animationDelay: "0.28s" }}>
+          <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-2 px-1">Браузерные уведомления</div>
+          <div className="glass rounded-3xl p-4 flex items-center gap-3">
+            <div className={`w-9 h-9 rounded-xl border flex items-center justify-center flex-shrink-0
+              ${notifPerm === "granted" ? "bg-green-500/10 border-green-500/20" : notifPerm === "denied" ? "bg-red-500/10 border-red-500/20" : "bg-amber-500/10 border-amber-500/20"}`}>
+              <Icon name={notifPerm === "granted" ? "BellRing" : notifPerm === "denied" ? "BellOff" : "Bell"}
+                size={16} className={notifPerm === "granted" ? "text-green-400" : notifPerm === "denied" ? "text-red-400" : "text-amber-400"} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium text-foreground">
+                {notifPerm === "granted" ? "Уведомления включены" : notifPerm === "denied" ? "Уведомления заблокированы" : "Разрешить уведомления"}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {notifPerm === "granted" ? "Вы получите уведомления о новых сообщениях" : notifPerm === "denied" ? "Разрешите доступ в настройках браузера" : "Нажмите, чтобы разрешить"}
+              </div>
+            </div>
+            {notifPerm === "default" && (
+              <button onClick={requestNotifPermission}
+                className="flex-shrink-0 px-3 py-1.5 rounded-xl bg-gradient-to-r from-violet-500 to-purple-600 text-white text-xs font-semibold hover:opacity-90 transition-all">
+                Включить
+              </button>
+            )}
+            {notifPerm === "granted" && (
+              <div className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0 animate-pulse-dot" />
+            )}
+          </div>
+        </div>
+
         <button onClick={onLogout}
           className="w-full glass rounded-3xl p-4 flex items-center gap-3 hover:bg-red-500/5 transition-all">
           <div className="w-9 h-9 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center flex-shrink-0">
@@ -897,6 +938,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("chats");
   const [chatsForBadge, setChatsForBadge] = useState<{ unread: number }[]>([]);
   const [authChecked, setAuthChecked] = useState(false);
+  const prevUnreadRef = useRef<Record<number, number>>({});
 
   useEffect(() => {
     if (!token) { setAuthChecked(true); return; }
@@ -915,13 +957,46 @@ export default function App() {
       .finally(() => setAuthChecked(true));
   }, []);
 
+  // Request notification permission on mount
+  useEffect(() => {
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  const showNotification = useCallback((title: string, body: string) => {
+    if (!("Notification" in window) || Notification.permission !== "granted") return;
+    if (document.visibilityState === "visible") return; // already looking at the app
+    try {
+      new Notification(title, {
+        body,
+        icon: "/favicon.svg",
+        tag: "pulse-message",
+        silent: false,
+      });
+    } catch { /* ignore */ }
+  }, []);
+
   const refreshBadge = useCallback(() => {
     if (!token) return;
     fetch(`${CHATS_URL}/chats`, { headers: apiHeaders(token) })
       .then(r => r.json())
-      .then(d => { if (d.chats) setChatsForBadge(d.chats); })
+      .then(d => {
+        if (!d.chats) return;
+        const newChats: Chat[] = d.chats;
+        setChatsForBadge(newChats);
+
+        // Compare with previous unread counts — fire notification for newly arrived messages
+        newChats.forEach(c => {
+          const prev = prevUnreadRef.current[c.id] ?? c.unread;
+          if (c.unread > prev) {
+            showNotification(`💬 ${c.name}`, c.last_msg || "Новое сообщение");
+          }
+          prevUnreadRef.current[c.id] = c.unread;
+        });
+      })
       .catch(() => {});
-  }, [token]);
+  }, [token, showNotification]);
 
   useEffect(() => { refreshBadge(); }, [refreshBadge, tab]);
 
