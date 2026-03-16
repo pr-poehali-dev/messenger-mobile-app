@@ -103,7 +103,7 @@ function AvatarEl({ name, size = "md", status }: {
 
 // ─── Auth Screen ──────────────────────────────────────────────────────────────
 
-function AuthScreen({ onAuth }: { onAuth: (token: string, user: User) => void }) {
+function AuthScreen({ onAuth }: { onAuth: (token: string, user: User, isNew?: boolean) => void }) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -126,7 +126,7 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User) => void })
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error || "Ошибка"); return; }
-      onAuth(data.token, data.user);
+      onAuth(data.token, data.user, mode === "register");
     } catch {
       setError("Ошибка сети. Попробуйте снова");
     } finally {
@@ -1745,6 +1745,113 @@ function SettingsTab({ onLogout, onTestSound }: { onLogout: () => void; onTestSo
   );
 }
 
+// ─── Onboarding Screen ────────────────────────────────────────────────────────
+
+const ONBOARDING_KEY = "nash_dom_onboarded";
+
+const ONBOARDING_SLIDES = [
+  {
+    icon: "MessageCircle",
+    gradient: "from-blue-600 to-sky-500",
+    glow: "rgba(0,119,182,0.5)",
+    title: "Общайтесь свободно",
+    desc: "Личные чаты и групповые беседы — всё в одном месте. Отправляйте сообщения, фото и файлы мгновенно.",
+  },
+  {
+    icon: "Users",
+    gradient: "from-sky-500 to-cyan-400",
+    glow: "rgba(0,180,230,0.5)",
+    title: "Сообщество соседей",
+    desc: "Создавайте группы для своего дома, подъезда или двора. Решайте вопросы вместе быстро и удобно.",
+  },
+  {
+    icon: "Shield",
+    gradient: "from-blue-700 to-blue-500",
+    glow: "rgba(26,58,107,0.6)",
+    title: "Безопасно и надёжно",
+    desc: "Пин-код защищает ваши переписки. Только вы решаете, кто видит ваш статус и профиль.",
+  },
+  {
+    icon: "Bell",
+    gradient: "from-cyan-500 to-sky-400",
+    glow: "rgba(56,217,245,0.5)",
+    title: "Всегда на связи",
+    desc: "Уведомления о новых сообщениях, статус «онлайн» и индикаторы прочтения — ничего не пропустите.",
+  },
+];
+
+function OnboardingScreen({ userName, onDone }: { userName: string; onDone: () => void }) {
+  const [slide, setSlide] = useState(0);
+  const total = ONBOARDING_SLIDES.length;
+  const s = ONBOARDING_SLIDES[slide];
+  const isLast = slide === total - 1;
+
+  function next() {
+    if (isLast) { onDone(); } else { setSlide(i => i + 1); }
+  }
+
+  return (
+    <div className="flex flex-col h-screen max-w-md mx-auto overflow-hidden relative"
+      style={{ background: "hsl(var(--background))" }}>
+
+      {/* Background glow */}
+      <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-72 h-72 rounded-full opacity-10 blur-3xl transition-all duration-700"
+          style={{ background: `radial-gradient(circle, ${s.glow}, transparent)` }} />
+      </div>
+
+      {/* Skip */}
+      <div className="flex justify-end px-6 pt-6 relative z-10">
+        {!isLast && (
+          <button onClick={onDone} className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+            Пропустить
+          </button>
+        )}
+      </div>
+
+      {/* Slides */}
+      <div className="flex-1 flex flex-col items-center justify-center px-8 gap-8 relative z-10">
+
+        {/* Icon */}
+        <div key={slide} className={`w-28 h-28 rounded-3xl bg-gradient-to-br ${s.gradient} flex items-center justify-center animate-pop`}
+          style={{ boxShadow: `0 0 60px ${s.glow}` }}>
+          <Icon name={s.icon as Parameters<typeof Icon>[0]["name"]} size={52} className="text-white" />
+        </div>
+
+        {/* Text */}
+        <div className="text-center space-y-3 animate-fade-in" key={`text-${slide}`}>
+          <h2 className="text-2xl font-golos font-black text-foreground leading-tight">{s.title}</h2>
+          <p className="text-muted-foreground text-sm leading-relaxed">{s.desc}</p>
+        </div>
+
+        {/* Dots */}
+        <div className="flex gap-2">
+          {ONBOARDING_SLIDES.map((_, i) => (
+            <button key={i} onClick={() => setSlide(i)}
+              className={`rounded-full transition-all duration-300 ${i === slide ? "w-6 h-2 bg-sky-400" : "w-2 h-2 bg-white/20"}`} />
+          ))}
+        </div>
+      </div>
+
+      {/* Bottom */}
+      <div className="px-6 pb-10 space-y-3 relative z-10">
+        {isLast && (
+          <div className="text-center animate-fade-in">
+            <p className="text-lg font-golos font-bold text-foreground">Добро пожаловать, {userName}! 🏠</p>
+            <p className="text-sm text-muted-foreground mt-1">Рады видеть вас в «Наш Дом»</p>
+          </div>
+        )}
+        <button onClick={next}
+          className={`w-full py-4 rounded-2xl font-golos font-bold text-white text-base transition-all active:scale-[0.98]
+            bg-gradient-to-r from-blue-600 to-sky-500 hover:opacity-90`}
+          style={{ boxShadow: "0 0 30px rgba(0,119,182,0.4)" }}>
+          {isLast ? "Начать общение" : "Далее"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Pin Screen ───────────────────────────────────────────────────────────────
 
 const PIN_KEY = "pulse_pin";
@@ -1900,6 +2007,7 @@ export default function App() {
   const [chatsForBadge, setChatsForBadge] = useState<{ unread: number }[]>([]);
   const [authChecked, setAuthChecked] = useState(false);
   const [pinUnlocked, setPinUnlocked] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const prevUnreadRef = useRef<Record<number, number>>();
   prevUnreadRef.current = prevUnreadRef.current ?? {};
 
@@ -1997,10 +2105,13 @@ export default function App() {
     return () => clearInterval(id);
   }, [refreshBadge]);
 
-  function handleAuth(newToken: string, newUser: User) {
+  function handleAuth(newToken: string, newUser: User, isNew = false) {
     setToken(newToken); setUser(newUser);
     localStorage.setItem("pulse_token", newToken);
     localStorage.setItem("pulse_user", JSON.stringify(newUser));
+    if (isNew && !localStorage.getItem(ONBOARDING_KEY)) {
+      setShowOnboarding(true);
+    }
   }
 
   async function handleLogout() {
@@ -2036,6 +2147,18 @@ export default function App() {
   const hasPin = !!localStorage.getItem(PIN_KEY);
   if (hasPin && !pinUnlocked) {
     return <PinScreen mode="enter" onSuccess={() => setPinUnlocked(true)} />;
+  }
+
+  if (showOnboarding && user) {
+    return (
+      <OnboardingScreen
+        userName={user.name.split(" ")[0]}
+        onDone={() => {
+          localStorage.setItem(ONBOARDING_KEY, "1");
+          setShowOnboarding(false);
+        }}
+      />
+    );
   }
 
   const tabs: Record<Tab, React.ReactNode> = {
