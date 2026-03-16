@@ -815,9 +815,39 @@ function ChatsTab({ token, currentUserId }: { token: string; currentUserId: numb
 
 // ─── Profile Tab ──────────────────────────────────────────────────────────────
 
-function ProfileTab({ user, onLogout }: { user: User; onLogout: () => void }) {
+function ProfileTab({ user, token, onLogout, onUserUpdate }: {
+  user: User; token: string; onLogout: () => void; onUserUpdate: (u: User) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(user.name);
+  const [bio, setBio] = useState(user.bio ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+
+  function startEdit() { setName(user.name); setBio(user.bio ?? ""); setError(""); setEditing(true); }
+  function cancelEdit() { setEditing(false); setError(""); }
+
+  async function saveProfile() {
+    if (!name.trim()) { setError("Имя не может быть пустым"); return; }
+    setSaving(true); setError("");
+    try {
+      const res = await fetch(`${AUTH_URL}/update-profile`, {
+        method: "POST", headers: apiHeaders(token),
+        body: JSON.stringify({ name: name.trim(), bio: bio.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error || "Ошибка сохранения"); return; }
+      onUserUpdate(data.user);
+      setEditing(false);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } finally { setSaving(false); }
+  }
+
   return (
     <div className="flex flex-col h-full overflow-y-auto">
+      {/* Hero */}
       <div className="relative px-4 pt-8 pb-6 text-center overflow-hidden"
         style={{ background: "radial-gradient(ellipse at top, rgba(168,85,247,0.15) 0%, transparent 70%)" }}>
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
@@ -837,15 +867,80 @@ function ProfileTab({ user, onLogout }: { user: User; onLogout: () => void }) {
             </div>
           </div>
           <h2 className="text-2xl font-golos font-black text-foreground mb-1">{user.name}</h2>
-          {user.bio && <p className="text-muted-foreground text-sm mb-2">{user.bio}</p>}
+          <p className="text-muted-foreground text-sm mb-2 min-h-[20px]">{user.bio || "Нет статуса"}</p>
           <div className="flex items-center justify-center gap-1.5">
             <div className="w-2 h-2 rounded-full status-online" />
             <span className="text-xs text-green-400">В сети</span>
           </div>
         </div>
+
+        {/* Edit toggle */}
+        <button onClick={editing ? cancelEdit : startEdit}
+          className="absolute top-4 right-4 p-2 hover:bg-white/10 rounded-full transition-colors">
+          <Icon name={editing ? "X" : "Edit2"} size={16} className="text-muted-foreground" />
+        </button>
       </div>
 
       <div className="px-4 space-y-3 pb-6">
+        {/* Edit form */}
+        {editing && (
+          <div className="glass rounded-3xl p-4 space-y-3 animate-fade-in border border-violet-500/20">
+            <div className="flex items-center gap-2 mb-1">
+              <Icon name="Edit3" size={14} className="text-purple-400" />
+              <span className="text-xs font-semibold text-purple-400 uppercase tracking-wide">Редактирование профиля</span>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground font-medium">Имя</label>
+              <div className="relative">
+                <Icon name="User" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <input value={name} onChange={e => setName(e.target.value)}
+                  placeholder="Ваше имя"
+                  className="w-full bg-secondary/60 border border-white/10 rounded-xl pl-9 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-purple-500/50 transition-all" />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground font-medium">О себе</label>
+              <div className="relative">
+                <Icon name="AlignLeft" size={14} className="absolute left-3 top-3 text-muted-foreground" />
+                <textarea value={bio} onChange={e => setBio(e.target.value)}
+                  placeholder="Расскажите о себе..." rows={2}
+                  className="w-full bg-secondary/60 border border-white/10 rounded-xl pl-9 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-purple-500/50 transition-all resize-none" />
+              </div>
+            </div>
+
+            {error && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-500/10 border border-red-500/20">
+                <Icon name="AlertCircle" size={13} className="text-red-400 flex-shrink-0" />
+                <span className="text-xs text-red-300">{error}</span>
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <button onClick={cancelEdit}
+                className="flex-1 py-2.5 rounded-xl glass text-sm font-medium text-muted-foreground hover:text-foreground transition-all">
+                Отмена
+              </button>
+              <button onClick={saveProfile} disabled={saving}
+                className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-violet-500 to-purple-600 text-white text-sm font-semibold hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-60 flex items-center justify-center gap-2">
+                {saving
+                  ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />Сохраняем...</>
+                  : <><Icon name="Check" size={14} />Сохранить</>}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Success toast */}
+        {saved && (
+          <div className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-green-500/10 border border-green-500/20 animate-fade-in">
+            <Icon name="CheckCircle" size={16} className="text-green-400 flex-shrink-0" />
+            <span className="text-sm text-green-300 font-medium">Профиль успешно обновлён!</span>
+          </div>
+        )}
+
+        {/* Info fields */}
         {[
           { icon: "Phone", label: "Телефон", value: user.phone, color: "text-purple-400", bg: "bg-violet-500/15 border-violet-500/20" },
           { icon: "Hash", label: "ID пользователя", value: `#${user.id}`, color: "text-cyan-400", bg: "bg-cyan-500/15 border-cyan-500/20" },
@@ -861,8 +956,19 @@ function ProfileTab({ user, onLogout }: { user: User; onLogout: () => void }) {
           </div>
         ))}
 
+        {!editing && (
+          <button onClick={startEdit}
+            className="w-full glass rounded-2xl p-4 flex items-center gap-3 hover:bg-white/5 transition-all">
+            <div className="w-10 h-10 rounded-xl bg-violet-500/15 border border-violet-500/20 flex items-center justify-center flex-shrink-0">
+              <Icon name="Edit3" size={16} className="text-purple-400" />
+            </div>
+            <span className="text-sm font-medium text-foreground">Редактировать профиль</span>
+            <Icon name="ChevronRight" size={16} className="text-muted-foreground ml-auto" />
+          </button>
+        )}
+
         <button onClick={onLogout}
-          className="w-full glass rounded-2xl p-4 flex items-center gap-3 hover:bg-red-500/5 transition-all mt-2">
+          className="w-full glass rounded-2xl p-4 flex items-center gap-3 hover:bg-red-500/5 transition-all">
           <div className="w-10 h-10 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center flex-shrink-0">
             <Icon name="LogOut" size={16} className="text-red-400" />
           </div>
@@ -1283,7 +1389,7 @@ export default function App() {
     contacts: <ContactsTab token={token} />,
     calls: <CallsTab />,
     status: <StatusTab user={user} />,
-    profile: <ProfileTab user={user} onLogout={handleLogout} />,
+    profile: <ProfileTab user={user} token={token} onLogout={handleLogout} onUserUpdate={u => { setUser(u); localStorage.setItem("pulse_user", JSON.stringify(u)); }} />,
     settings: <SettingsTab onLogout={handleLogout} onTestSound={playSound} />,
   };
 

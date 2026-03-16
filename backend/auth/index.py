@@ -112,6 +112,28 @@ def handler(event: dict, context) -> dict:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Сессия истекла"})}
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"user": user})}
 
+        # POST /update-profile
+        if method == "POST" and path.endswith("/update-profile"):
+            if not token:
+                return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
+            user = get_user_by_token(conn, token)
+            if not user:
+                return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Сессия истекла"})}
+            body = json.loads(event.get("body") or "{}")
+            new_name = body.get("name", "").strip()
+            new_bio = body.get("bio", "").strip()
+            if not new_name:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Имя не может быть пустым"})}
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE {SCHEMA}.users SET name = %s, bio = %s WHERE id = %s RETURNING id, name, phone, bio, status",
+                    (new_name, new_bio, user["id"])
+                )
+                row = cur.fetchone()
+            conn.commit()
+            updated = {"id": row[0], "name": row[1], "phone": row[2], "bio": row[3] or "", "status": row[4]}
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"user": updated})}
+
         # POST /logout
         if method == "POST" and path.endswith("/logout"):
             if token:
