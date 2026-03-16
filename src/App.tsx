@@ -65,7 +65,7 @@ const MOCK_CALLS = [
 ];
 
 const MOCK_STATUSES = [
-  { id: "1", name: "Анна Смирнова", time: "5 мин", viewed: false, color: "from-violet-500 to-cyan-400", text: "Новый день — новые возможности! ✨" },
+  { id: "1", name: "Анна Смирнова", time: "5 мин", viewed: false, color: "from-blue-500 to-cyan-400", text: "Новый день — новые возможности! ✨" },
   { id: "2", name: "Антон Волков", time: "12 мин", viewed: false, color: "from-pink-500 to-orange-400", text: "На конференции по дизайну 🎨" },
   { id: "3", name: "Дарья Новикова", time: "1 ч", viewed: true, color: "from-green-400 to-cyan-500" },
 ];
@@ -73,7 +73,7 @@ const MOCK_STATUSES = [
 // ─── Avatar helpers ───────────────────────────────────────────────────────────
 
 const AVATAR_COLORS = [
-  "from-violet-500 to-purple-600", "from-cyan-400 to-blue-500",
+  "from-blue-600 to-blue-700", "from-cyan-400 to-blue-500",
   "from-pink-400 to-rose-500", "from-green-400 to-emerald-500",
   "from-orange-400 to-amber-500", "from-indigo-500 to-blue-600",
 ];
@@ -138,7 +138,7 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User) => void })
     <div className="flex flex-col h-full overflow-hidden relative">
       <div className="absolute inset-0 pointer-events-none">
         <div className="absolute top-0 left-0 w-full h-1/2"
-          style={{ background: "radial-gradient(ellipse at 30% 20%, rgba(168,85,247,0.18) 0%, transparent 60%)" }} />
+          style={{ background: "radial-gradient(ellipse at 30% 20%, rgba(0,119,182,0.18) 0%, transparent 60%)" }} />
         <div className="absolute bottom-0 right-0 w-full h-1/2"
           style={{ background: "radial-gradient(ellipse at 70% 80%, rgba(34,211,238,0.1) 0%, transparent 60%)" }} />
         {[{ top: "8%", left: "15%", size: 60, delay: "0s", dur: "4s", c: 0 },
@@ -146,14 +146,14 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User) => void })
           { top: "60%", left: "5%", size: 30, delay: "0.5s", dur: "5s", c: 0 }].map((b, i) => (
           <div key={i} className="absolute rounded-full opacity-[0.07]"
             style={{ width: b.size, height: b.size, top: b.top, left: b.left,
-              background: b.c === 0 ? "radial-gradient(circle, #a855f7, transparent)" : "radial-gradient(circle, #22d3ee, transparent)",
+              background: b.c === 0 ? "radial-gradient(circle, #0077b6, transparent)" : "radial-gradient(circle, #22d3ee, transparent)",
               animation: `float ${b.dur} ease-in-out infinite`, animationDelay: b.delay }} />
         ))}
       </div>
 
       <div className="relative z-10 flex flex-col justify-center flex-1 px-6 py-8">
         <div className="text-center mb-8 animate-fade-in">
-          <div className="w-20 h-20 mx-auto mb-4 rounded-3xl bg-gradient-to-br from-violet-500 to-purple-700 flex items-center justify-center shadow-[0_0_40px_rgba(168,85,247,0.5)]">
+          <div className="w-20 h-20 mx-auto mb-4 rounded-3xl bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center shadow-[0_0_40px_rgba(0,119,182,0.5)]">
             <Icon name="Zap" size={36} className="text-white" />
           </div>
           <h1 className="text-3xl font-golos font-black text-gradient mb-1">Pulse</h1>
@@ -164,7 +164,7 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User) => void })
           {(["login", "register"] as const).map(m => (
             <button key={m} onClick={() => { setMode(m); setError(""); }}
               className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200
-                ${mode === m ? "bg-gradient-to-r from-violet-500 to-purple-600 text-white shadow-[0_0_20px_rgba(168,85,247,0.4)]" : "text-muted-foreground hover:text-foreground"}`}>
+                ${mode === m ? "bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-[0_0_20px_rgba(0,180,230,0.4)]" : "text-muted-foreground hover:text-foreground"}`}>
               {m === "login" ? "Войти" : "Регистрация"}
             </button>
           ))}
@@ -177,7 +177,7 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User) => void })
                 <Icon name="User" size={16} className="text-muted-foreground" />
               </div>
               <input value={name} onChange={e => setName(e.target.value)} placeholder="Ваше имя"
-                className="w-full bg-secondary/60 border border-white/10 rounded-2xl pl-11 pr-4 py-3.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-purple-500/50 focus:bg-secondary transition-all" />
+                className="w-full bg-secondary/60 border border-white/10 rounded-2xl pl-11 pr-4 py-3.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 focus:bg-secondary transition-all" />
             </div>
           )}
           <div className="relative">
@@ -185,7 +185,7 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User) => void })
               <Icon name="Phone" size={16} className="text-muted-foreground" />
             </div>
             <input value={phone} onChange={e => setPhone(e.target.value)} placeholder="+7 999 000-00-00" type="tel"
-              className="w-full bg-secondary/60 border border-white/10 rounded-2xl pl-11 pr-4 py-3.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-purple-500/50 focus:bg-secondary transition-all" />
+              className="w-full bg-secondary/60 border border-white/10 rounded-2xl pl-11 pr-4 py-3.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 focus:bg-secondary transition-all" />
           </div>
           <div className="relative">
             <div className="absolute left-4 top-1/2 -translate-y-1/2">
@@ -194,7 +194,7 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User) => void })
             <input value={password} onChange={e => setPassword(e.target.value)}
               onKeyDown={e => e.key === "Enter" && submit()}
               placeholder="Пароль" type={showPass ? "text" : "password"}
-              className="w-full bg-secondary/60 border border-white/10 rounded-2xl pl-11 pr-12 py-3.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-purple-500/50 focus:bg-secondary transition-all" />
+              className="w-full bg-secondary/60 border border-white/10 rounded-2xl pl-11 pr-12 py-3.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 focus:bg-secondary transition-all" />
             <button onClick={() => setShowPass(!showPass)}
               className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
               <Icon name={showPass ? "EyeOff" : "Eye"} size={16} />
@@ -209,7 +209,7 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User) => void })
           )}
 
           <button onClick={submit} disabled={loading}
-            className="w-full py-4 rounded-2xl bg-gradient-to-r from-violet-500 to-purple-600 text-white font-golos font-semibold text-base hover:opacity-90 active:scale-[0.98] transition-all shadow-[0_0_30px_rgba(168,85,247,0.4)] disabled:opacity-60 disabled:cursor-not-allowed mt-2">
+            className="w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 to-blue-700 text-white font-golos font-semibold text-base hover:opacity-90 active:scale-[0.98] transition-all shadow-[0_0_30px_rgba(0,180,230,0.4)] disabled:opacity-60 disabled:cursor-not-allowed mt-2">
             {loading ? (
               <span className="flex items-center justify-center gap-2">
                 <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -251,15 +251,15 @@ function BottomNav({ active, onChange, unreadCount }: {
               className={`relative flex flex-col items-center gap-0.5 px-2 py-2 rounded-2xl transition-all duration-200 min-w-[48px]
                 ${isActive ? "nav-item-active" : "hover:bg-white/5 active:scale-95"}`}>
               <div className="relative">
-                <Icon name={icon} size={20} className={`transition-all ${isActive ? "text-purple-400" : "text-muted-foreground"}`} />
+                <Icon name={icon} size={20} className={`transition-all ${isActive ? "text-sky-400" : "text-muted-foreground"}`} />
                 {tab === "chats" && unreadCount > 0 && (
-                  <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-gradient-to-br from-violet-500 to-pink-500 rounded-full text-[9px] text-white font-bold flex items-center justify-center">
+                  <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-gradient-to-br from-blue-500 to-pink-500 rounded-full text-[9px] text-white font-bold flex items-center justify-center">
                     {unreadCount > 9 ? "9+" : unreadCount}
                   </span>
                 )}
               </div>
-              <span className={`text-[9px] font-medium ${isActive ? "text-purple-400" : "text-muted-foreground"}`}>{label}</span>
-              {isActive && <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-purple-400" />}
+              <span className={`text-[9px] font-medium ${isActive ? "text-sky-400" : "text-muted-foreground"}`}>{label}</span>
+              {isActive && <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-sky-400" />}
             </button>
           );
         })}
@@ -567,8 +567,8 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
   if (leftGroup) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4 animate-fade-in">
-        <div className="w-16 h-16 rounded-3xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
-          <Icon name="LogOut" size={28} className="text-violet-400" />
+        <div className="w-16 h-16 rounded-3xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
+          <Icon name="LogOut" size={28} className="text-blue-400" />
         </div>
         <p className="text-muted-foreground text-sm">Вы покинули группу</p>
       </div>
@@ -598,12 +598,12 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
           </button>
           {chat.is_group && (
             <button onClick={toggleMembers}
-              className={`p-2 rounded-full transition-colors ${showMembers ? "bg-violet-500/20 text-purple-400" : "hover:bg-white/10 text-muted-foreground"}`}>
+              className={`p-2 rounded-full transition-colors ${showMembers ? "bg-blue-500/20 text-sky-400" : "hover:bg-white/10 text-muted-foreground"}`}>
               <Icon name="Users" size={18} />
             </button>
           )}
           <button onClick={openSearch}
-            className={`p-2 rounded-full transition-colors ${searchOpen ? "bg-violet-500/20 text-purple-400" : "hover:bg-white/10 text-muted-foreground"}`}>
+            className={`p-2 rounded-full transition-colors ${searchOpen ? "bg-blue-500/20 text-sky-400" : "hover:bg-white/10 text-muted-foreground"}`}>
             <Icon name="Search" size={18} />
           </button>
           {!chat.is_group && (
@@ -622,7 +622,7 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
         {chat.is_group && showMembers && (
           <div className="mt-3 animate-fade-in">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold text-purple-400 uppercase tracking-wide">Участники</span>
+              <span className="text-xs font-semibold text-sky-400 uppercase tracking-wide">Участники</span>
               <button onClick={leaveGroup}
                 className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 transition-colors px-2 py-1 rounded-lg hover:bg-red-500/10">
                 <Icon name="LogOut" size={12} />
@@ -631,7 +631,7 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
             </div>
             {membersLoading ? (
               <div className="flex justify-center py-3">
-                <div className="w-5 h-5 border-2 border-purple-500/30 border-t-purple-500 rounded-full animate-spin" />
+                <div className="w-5 h-5 border-2 border-sky-500/30 border-t-sky-500 rounded-full animate-spin" />
               </div>
             ) : (
               <div className="space-y-1 max-h-48 overflow-y-auto">
@@ -679,7 +679,7 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
                 onChange={e => setSearchQuery(e.target.value)}
                 onKeyDown={e => { if (e.key === "Enter") { if (e.shiftKey) { searchPrev(); } else { searchNext(); } } else if (e.key === "Escape") { closeSearch(); } }}
                 placeholder="Поиск по сообщениям..."
-                className="w-full bg-secondary/60 border border-white/10 rounded-xl pl-9 pr-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-violet-500/50 transition-all" />
+                className="w-full bg-secondary/60 border border-white/10 rounded-xl pl-9 pr-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 transition-all" />
             </div>
             {searchQuery.trim() && (
               <span className="text-xs text-muted-foreground whitespace-nowrap min-w-[52px] text-center">
@@ -703,20 +703,20 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
 
       <div
         className="flex-1 overflow-y-auto px-4 py-4 space-y-2"
-        style={{ background: "radial-gradient(ellipse at top, rgba(168,85,247,0.04) 0%, transparent 60%)" }}
+        style={{ background: "radial-gradient(ellipse at top, rgba(0,119,182,0.04) 0%, transparent 60%)" }}
         onScroll={e => {
           const el = e.currentTarget;
           isAtBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
         }}>
         {loading && (
           <div className="flex justify-center py-8">
-            <div className="w-6 h-6 border-2 border-purple-500/30 border-t-purple-500 rounded-full animate-spin" />
+            <div className="w-6 h-6 border-2 border-sky-500/30 border-t-sky-500 rounded-full animate-spin" />
           </div>
         )}
         {!loading && messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
-            <div className="w-14 h-14 rounded-2xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
-              <Icon name="MessageCircle" size={24} className="text-violet-400" />
+            <div className="w-14 h-14 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
+              <Icon name="MessageCircle" size={24} className="text-blue-400" />
             </div>
             <p className="text-muted-foreground text-sm">Начните переписку! 👋</p>
           </div>
@@ -748,7 +748,7 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
               <div className={`flex items-end gap-1 group ${msg.out ? "flex-row-reverse" : "flex-row"}`}>
               <div className={`max-w-[75%] px-4 py-2.5 transition-all ${msg.out ? "msg-bubble-out" : "msg-bubble-in"} ${isActive ? "ring-2 ring-yellow-400/60" : isMatch ? "ring-1 ring-yellow-400/25" : ""}`}>
                 {!msg.out && chat.is_group && msg.sender_name && (
-                  <div className="text-[10px] text-purple-400 font-semibold mb-1">{msg.sender_name}</div>
+                  <div className="text-[10px] text-sky-400 font-semibold mb-1">{msg.sender_name}</div>
                 )}
                 {/* File attachment */}
                 {msg.file_url && msg.file_type?.startsWith("image/") && (
@@ -761,8 +761,8 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
                 {msg.file_url && !msg.file_type?.startsWith("image/") && (
                   <a href={msg.file_url} target="_blank" rel="noopener noreferrer" download={msg.file_name || true}
                     className="flex items-center gap-2.5 mb-1.5 px-3 py-2.5 rounded-xl bg-black/20 hover:bg-black/30 transition-colors border border-white/10 max-w-[240px]">
-                    <div className="w-8 h-8 rounded-lg bg-violet-500/20 flex items-center justify-center flex-shrink-0">
-                      <Icon name="FileDown" size={15} className="text-violet-400" />
+                    <div className="w-8 h-8 rounded-lg bg-sky-500/20 flex items-center justify-center flex-shrink-0">
+                      <Icon name="FileDown" size={15} className="text-sky-400" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-medium text-white truncate">{msg.file_name || "Файл"}</p>
@@ -795,7 +795,7 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
                   const r = (msg.reactions || []).find(rx => rx.emoji === e);
                   return (
                     <button key={e} onClick={() => sendReaction(msg.id, e)}
-                      className={`text-lg leading-none p-1 rounded-xl transition-all hover:scale-125 active:scale-95 ${r?.i_reacted ? "bg-violet-500/25" : "hover:bg-white/10"}`}>
+                      className={`text-lg leading-none p-1 rounded-xl transition-all hover:scale-125 active:scale-95 ${r?.i_reacted ? "bg-blue-500/25" : "hover:bg-white/10"}`}>
                       {e}
                     </button>
                   );
@@ -810,7 +810,7 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
                   <button key={r.emoji} onClick={() => sendReaction(msg.id, r.emoji)}
                     className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border transition-all hover:scale-105 active:scale-95
                       ${r.i_reacted
-                        ? "bg-violet-500/25 border-violet-500/40 text-white"
+                        ? "bg-blue-500/25 border-blue-500/40 text-white"
                         : "bg-white/5 border-white/10 text-white/70 hover:bg-white/10"}`}>
                     <span className="text-sm leading-none">{r.emoji}</span>
                     <span className="font-medium">{r.count}</span>
@@ -829,7 +829,7 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
         <div className="flex-shrink-0 px-5 py-1.5 flex items-center gap-2 animate-fade-in">
           <div className="flex gap-0.5 items-end">
             {[0, 1, 2].map(i => (
-              <div key={i} className="w-1.5 h-1.5 rounded-full bg-purple-400"
+              <div key={i} className="w-1.5 h-1.5 rounded-full bg-sky-400"
                 style={{ animation: "typingBounce 1.2s ease-in-out infinite", animationDelay: `${i * 0.2}s` }} />
             ))}
           </div>
@@ -844,13 +844,13 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
       <div className="flex-shrink-0 glass border-t border-white/5 px-4 pt-2 pb-3 space-y-2">
         {/* Pending file preview */}
         {pendingFile && (
-          <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-violet-500/10 border border-violet-500/20 animate-fade-in">
+          <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-blue-500/10 border border-blue-500/20 animate-fade-in">
             {pendingFile.type.startsWith("image/") ? (
               <img src={pendingFile.url} alt={pendingFile.name}
                 className="w-10 h-10 rounded-lg object-cover flex-shrink-0 border border-white/10" />
             ) : (
               <div className="w-10 h-10 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0">
-                <Icon name="FileText" size={18} className="text-violet-400" />
+                <Icon name="FileText" size={18} className="text-blue-400" />
               </div>
             )}
             <div className="flex-1 min-w-0">
@@ -870,17 +870,17 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
           <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
             className={`p-2 rounded-full transition-all flex-shrink-0 ${uploading ? "opacity-50" : "hover:bg-white/10"}`}>
             {uploading
-              ? <div className="w-5 h-5 border-2 border-violet-400/30 border-t-violet-400 rounded-full animate-spin" />
+              ? <div className="w-5 h-5 border-2 border-blue-400/30 border-t-blue-400 rounded-full animate-spin" />
               : <Icon name="Paperclip" size={20} className="text-muted-foreground" />}
           </button>
           <textarea value={text} onChange={e => { setText(e.target.value); sendTyping(); }}
             onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
             placeholder="Сообщение..." rows={1}
-            className="flex-1 bg-secondary/60 border border-white/10 rounded-2xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:border-purple-500/50 transition-all"
+            className="flex-1 bg-secondary/60 border border-white/10 rounded-2xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:border-sky-500/50 transition-all"
             style={{ maxHeight: "100px" }} />
           <button onClick={send} disabled={!text.trim() && !pendingFile}
             className={`p-3 rounded-full transition-all flex-shrink-0 ${(text.trim() || pendingFile)
-              ? "bg-gradient-to-br from-violet-500 to-purple-600 hover:scale-105 shadow-[0_0_20px_rgba(168,85,247,0.5)]"
+              ? "bg-gradient-to-br from-blue-600 to-blue-700 hover:scale-105 shadow-[0_0_20px_rgba(0,180,230,0.5)]"
               : "bg-secondary opacity-50"}`}>
             <Icon name="Send" size={16} className="text-white" />
           </button>
@@ -982,7 +982,7 @@ function ChatsTab({ token, currentUserId }: { token: string; currentUserId: numb
           <h1 className="text-2xl font-golos font-black text-gradient">Чаты</h1>
           <button onClick={() => creating ? resetCreate() : setCreating(true)}
             className="p-2 hover:bg-white/10 rounded-full transition-colors">
-            <Icon name={creating ? "X" : "PenSquare"} size={20} className="text-purple-400" />
+            <Icon name={creating ? "X" : "PenSquare"} size={20} className="text-sky-400" />
           </button>
         </div>
 
@@ -993,7 +993,7 @@ function ChatsTab({ token, currentUserId }: { token: string; currentUserId: numb
               {(["direct", "group"] as const).map(m => (
                 <button key={m} onClick={() => { setCreateMode(m); setSelectedUsers([]); setNewChatSearch(""); setFoundUsers([]); }}
                   className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-semibold transition-all
-                    ${createMode === m ? "bg-gradient-to-r from-violet-500 to-purple-600 text-white" : "text-muted-foreground hover:text-foreground"}`}>
+                    ${createMode === m ? "bg-gradient-to-r from-blue-600 to-blue-700 text-white" : "text-muted-foreground hover:text-foreground"}`}>
                   <Icon name={m === "direct" ? "MessageCircle" : "Users"} size={12} />
                   {m === "direct" ? "Личный" : "Группа"}
                 </button>
@@ -1005,7 +1005,7 @@ function ChatsTab({ token, currentUserId }: { token: string; currentUserId: numb
               <div className="animate-fade-in">
                 <input value={groupName} onChange={e => setGroupName(e.target.value)}
                   placeholder="Название группы..."
-                  className="w-full bg-secondary/60 border border-white/10 rounded-xl px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-purple-500/50 transition-all" />
+                  className="w-full bg-secondary/60 border border-white/10 rounded-xl px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 transition-all" />
               </div>
             )}
 
@@ -1013,11 +1013,11 @@ function ChatsTab({ token, currentUserId }: { token: string; currentUserId: numb
             {createMode === "group" && selectedUsers.length > 0 && (
               <div className="flex flex-wrap gap-1.5 animate-fade-in">
                 {selectedUsers.map(u => (
-                  <div key={u.id} className="flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-violet-500/20 border border-violet-500/30">
-                    <span className="text-xs text-violet-300">{u.name.split(" ")[0]}</span>
+                  <div key={u.id} className="flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-blue-500/20 border border-blue-500/30">
+                    <span className="text-xs text-sky-300">{u.name.split(" ")[0]}</span>
                     <button onClick={() => setSelectedUsers(prev => prev.filter(s => s.id !== u.id))}
                       className="w-4 h-4 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors">
-                      <Icon name="X" size={10} className="text-violet-300" />
+                      <Icon name="X" size={10} className="text-sky-300" />
                     </button>
                   </div>
                 ))}
@@ -1030,7 +1030,7 @@ function ChatsTab({ token, currentUserId }: { token: string; currentUserId: numb
               <input value={newChatSearch}
                 onChange={e => { setNewChatSearch(e.target.value); searchUsers(e.target.value); }}
                 placeholder={createMode === "group" ? "Добавить участников..." : "Имя или номер..."}
-                className="w-full bg-secondary/60 border border-white/10 rounded-xl pl-8 pr-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-purple-500/50 transition-all" />
+                className="w-full bg-secondary/60 border border-white/10 rounded-xl pl-8 pr-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 transition-all" />
             </div>
 
             {/* Results */}
@@ -1042,17 +1042,17 @@ function ChatsTab({ token, currentUserId }: { token: string; currentUserId: numb
                     <button key={u.id}
                       onClick={() => createMode === "group" ? toggleUser(u) : startChat(u.id)}
                       className={`w-full flex items-center gap-2 p-2 rounded-xl transition-all
-                        ${selected ? "bg-violet-500/15 border border-violet-500/20" : "hover:bg-white/5"}`}>
+                        ${selected ? "bg-blue-500/15 border border-blue-500/20" : "hover:bg-white/5"}`}>
                       <AvatarEl name={u.name} size="xs" status={u.status} />
                       <div className="flex-1 min-w-0 text-left">
                         <div className="text-sm font-medium text-foreground truncate">{u.name}</div>
                         <div className="text-xs text-muted-foreground">{u.phone}</div>
                       </div>
                       {createMode === "group"
-                        ? <div className={`w-5 h-5 rounded-full border flex items-center justify-center flex-shrink-0 transition-all ${selected ? "bg-violet-500 border-violet-500" : "border-white/20"}`}>
+                        ? <div className={`w-5 h-5 rounded-full border flex items-center justify-center flex-shrink-0 transition-all ${selected ? "bg-blue-500 border-blue-500" : "border-white/20"}`}>
                             {selected && <Icon name="Check" size={10} className="text-white" />}
                           </div>
-                        : <Icon name="MessageCircle" size={14} className="text-purple-400" />}
+                        : <Icon name="MessageCircle" size={14} className="text-sky-400" />}
                     </button>
                   );
                 })}
@@ -1065,7 +1065,7 @@ function ChatsTab({ token, currentUserId }: { token: string; currentUserId: numb
             {/* Create group button */}
             {createMode === "group" && selectedUsers.length > 0 && groupName.trim() && (
               <button onClick={createGroup} disabled={groupCreating}
-                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-violet-500 to-purple-600 text-white text-sm font-semibold hover:opacity-90 transition-all disabled:opacity-60 flex items-center justify-center gap-2 animate-fade-in">
+                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm font-semibold hover:opacity-90 transition-all disabled:opacity-60 flex items-center justify-center gap-2 animate-fade-in">
                 {groupCreating
                   ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />Создаём...</>
                   : <><Icon name="Users" size={14} />Создать группу «{groupName}» · {selectedUsers.length + 1} чел.</>}
@@ -1077,21 +1077,21 @@ function ChatsTab({ token, currentUserId }: { token: string; currentUserId: numb
         <div className="relative">
           <Icon name="Search" size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Поиск чатов..."
-            className="w-full bg-secondary/60 border border-white/10 rounded-2xl pl-9 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-purple-500/50 transition-all" />
+            className="w-full bg-secondary/60 border border-white/10 rounded-2xl pl-9 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 transition-all" />
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto">
         {loading && (
           <div className="flex flex-col items-center justify-center h-full gap-4">
-            <div className="w-8 h-8 border-2 border-purple-500/30 border-t-purple-500 rounded-full animate-spin" />
+            <div className="w-8 h-8 border-2 border-sky-500/30 border-t-sky-500 rounded-full animate-spin" />
             <p className="text-sm text-muted-foreground">Загружаем чаты...</p>
           </div>
         )}
         {!loading && filtered.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full gap-4 px-8 text-center">
-            <div className="w-16 h-16 rounded-3xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
-              <Icon name="MessageCircle" size={28} className="text-violet-400" />
+            <div className="w-16 h-16 rounded-3xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
+              <Icon name="MessageCircle" size={28} className="text-blue-400" />
             </div>
             <div>
               <p className="font-golos font-semibold text-foreground mb-1">Нет чатов</p>
@@ -1110,7 +1110,7 @@ function ChatsTab({ token, currentUserId }: { token: string; currentUserId: numb
               <div className="relative flex-shrink-0">
                 <AvatarEl name={chat.name} size="md" status={!chat.is_group ? "online" : undefined} />
                 {chat.is_group && (
-                  <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-gradient-to-br from-violet-500 to-cyan-400 flex items-center justify-center">
+                  <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center">
                     <Icon name="Users" size={10} className="text-white" />
                   </div>
                 )}
@@ -1118,14 +1118,14 @@ function ChatsTab({ token, currentUserId }: { token: string; currentUserId: numb
               <div className="flex-1 min-w-0 text-left">
                 <div className="flex items-center justify-between">
                   <span className="font-golos font-semibold text-foreground text-sm truncate">{chat.name}</span>
-                  <span className={`text-[11px] flex-shrink-0 ml-2 ${chat.unread > 0 ? "text-purple-400" : "text-muted-foreground"}`}>
+                  <span className={`text-[11px] flex-shrink-0 ml-2 ${chat.unread > 0 ? "text-sky-400" : "text-muted-foreground"}`}>
                     {relTime}
                   </span>
                 </div>
                 <div className="flex items-center justify-between mt-0.5">
                   <span className="text-xs text-muted-foreground truncate">{chat.last_msg || "Нет сообщений"}</span>
                   {chat.unread > 0 && (
-                    <span className="flex-shrink-0 ml-2 min-w-[20px] h-5 px-1.5 rounded-full bg-gradient-to-r from-violet-500 to-purple-600 text-white text-[10px] font-bold flex items-center justify-center">
+                    <span className="flex-shrink-0 ml-2 min-w-[20px] h-5 px-1.5 rounded-full bg-gradient-to-r from-blue-600 to-blue-700 text-white text-[10px] font-bold flex items-center justify-center">
                       {chat.unread}
                     </span>
                   )}
@@ -1221,18 +1221,18 @@ function ProfileTab({ user, token, onLogout, onUserUpdate }: {
     <div className="flex flex-col h-full overflow-y-auto">
       {/* Hero */}
       <div className="relative px-4 pt-8 pb-6 text-center overflow-hidden"
-        style={{ background: "radial-gradient(ellipse at top, rgba(168,85,247,0.15) 0%, transparent 70%)" }}>
+        style={{ background: "radial-gradient(ellipse at top, rgba(0,119,182,0.15) 0%, transparent 70%)" }}>
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
           {[...Array(4)].map((_, i) => (
             <div key={i} className="absolute rounded-full opacity-10"
-              style={{ width: 30 + i * 20, height: 30 + i * 20, background: "linear-gradient(135deg, #a855f7, #22d3ee)",
+              style={{ width: 30 + i * 20, height: 30 + i * 20, background: "linear-gradient(135deg, #0077b6, #22d3ee)",
                 top: `${10 + i * 15}%`, left: `${5 + i * 20}%`,
                 animation: `float ${3 + i * 0.5}s ease-in-out infinite`, animationDelay: `${i * 0.3}s` }} />
           ))}
         </div>
         <div className="relative z-10">
           <div className="flex justify-center mb-4">
-            <div className="p-0.5 rounded-full bg-gradient-to-br from-violet-500 to-cyan-400 shadow-[0_0_30px_rgba(168,85,247,0.5)]">
+            <div className="p-0.5 rounded-full bg-gradient-to-br from-blue-500 to-cyan-400 shadow-[0_0_30px_rgba(0,180,230,0.5)]">
               <div className="p-0.5 rounded-full bg-background">
                 <AvatarEl name={user.name} size="xl" />
               </div>
@@ -1256,10 +1256,10 @@ function ProfileTab({ user, token, onLogout, onUserUpdate }: {
       <div className="px-4 space-y-3 pb-6">
         {/* Edit form */}
         {editing && (
-          <div className="glass rounded-3xl p-4 space-y-3 animate-fade-in border border-violet-500/20">
+          <div className="glass rounded-3xl p-4 space-y-3 animate-fade-in border border-blue-500/20">
             <div className="flex items-center gap-2 mb-1">
-              <Icon name="Edit3" size={14} className="text-purple-400" />
-              <span className="text-xs font-semibold text-purple-400 uppercase tracking-wide">Редактирование профиля</span>
+              <Icon name="Edit3" size={14} className="text-sky-400" />
+              <span className="text-xs font-semibold text-sky-400 uppercase tracking-wide">Редактирование профиля</span>
             </div>
 
             <div className="space-y-2">
@@ -1268,7 +1268,7 @@ function ProfileTab({ user, token, onLogout, onUserUpdate }: {
                 <Icon name="User" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                 <input value={name} onChange={e => setName(e.target.value)}
                   placeholder="Ваше имя"
-                  className="w-full bg-secondary/60 border border-white/10 rounded-xl pl-9 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-purple-500/50 transition-all" />
+                  className="w-full bg-secondary/60 border border-white/10 rounded-xl pl-9 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 transition-all" />
               </div>
             </div>
 
@@ -1278,7 +1278,7 @@ function ProfileTab({ user, token, onLogout, onUserUpdate }: {
                 <Icon name="AlignLeft" size={14} className="absolute left-3 top-3 text-muted-foreground" />
                 <textarea value={bio} onChange={e => setBio(e.target.value)}
                   placeholder="Расскажите о себе..." rows={2}
-                  className="w-full bg-secondary/60 border border-white/10 rounded-xl pl-9 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-purple-500/50 transition-all resize-none" />
+                  className="w-full bg-secondary/60 border border-white/10 rounded-xl pl-9 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 transition-all resize-none" />
               </div>
             </div>
 
@@ -1295,7 +1295,7 @@ function ProfileTab({ user, token, onLogout, onUserUpdate }: {
                 Отмена
               </button>
               <button onClick={saveProfile} disabled={saving}
-                className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-violet-500 to-purple-600 text-white text-sm font-semibold hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-60 flex items-center justify-center gap-2">
+                className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm font-semibold hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-60 flex items-center justify-center gap-2">
                 {saving
                   ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />Сохраняем...</>
                   : <><Icon name="Check" size={14} />Сохранить</>}
@@ -1314,7 +1314,7 @@ function ProfileTab({ user, token, onLogout, onUserUpdate }: {
 
         {/* Info fields */}
         {[
-          { icon: "Phone", label: "Телефон", value: user.phone, color: "text-purple-400", bg: "bg-violet-500/15 border-violet-500/20" },
+          { icon: "Phone", label: "Телефон", value: user.phone, color: "text-sky-400", bg: "bg-blue-500/15 border-blue-500/20" },
           { icon: "Hash", label: "ID пользователя", value: `#${user.id}`, color: "text-cyan-400", bg: "bg-cyan-500/15 border-cyan-500/20" },
         ].map(item => (
           <div key={item.label} className="glass rounded-2xl p-4 flex items-center gap-3">
@@ -1331,8 +1331,8 @@ function ProfileTab({ user, token, onLogout, onUserUpdate }: {
         {!editing && (
           <button onClick={startEdit}
             className="w-full glass rounded-2xl p-4 flex items-center gap-3 hover:bg-white/5 transition-all">
-            <div className="w-10 h-10 rounded-xl bg-violet-500/15 border border-violet-500/20 flex items-center justify-center flex-shrink-0">
-              <Icon name="Edit3" size={16} className="text-purple-400" />
+            <div className="w-10 h-10 rounded-xl bg-blue-500/15 border border-blue-500/20 flex items-center justify-center flex-shrink-0">
+              <Icon name="Edit3" size={16} className="text-sky-400" />
             </div>
             <span className="text-sm font-medium text-foreground">Редактировать профиль</span>
             <Icon name="ChevronRight" size={16} className="text-muted-foreground ml-auto" />
@@ -1502,7 +1502,7 @@ function CallsTab() {
                 </div>
               </div>
               <button className="p-2 hover:bg-white/10 rounded-full transition-colors">
-                <Icon name={call.callType === "video" ? "Video" : "Phone"} size={16} className="text-purple-400" />
+                <Icon name={call.callType === "video" ? "Video" : "Phone"} size={16} className="text-sky-400" />
               </button>
             </div>
           );
@@ -1521,7 +1521,7 @@ function StatusTab({ user }: { user: User }) {
         <h1 className="text-2xl font-golos font-black text-gradient mb-4">Статусы</h1>
         <div className="glass rounded-3xl p-4 mb-3">
           <div className="flex items-center gap-3">
-            <div className="p-0.5 rounded-full bg-gradient-to-br from-violet-500 to-cyan-400">
+            <div className="p-0.5 rounded-full bg-gradient-to-br from-blue-500 to-cyan-400">
               <div className="p-0.5 rounded-full bg-background"><AvatarEl name={user.name} size="sm" /></div>
             </div>
             <div className="flex-1">
@@ -1529,7 +1529,7 @@ function StatusTab({ user }: { user: User }) {
               <div className="text-xs text-muted-foreground">Добавить обновление</div>
             </div>
             <button onClick={() => setPosting(!posting)}
-              className="p-2.5 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 hover:scale-105 transition-all">
+              className="p-2.5 rounded-full bg-gradient-to-br from-blue-600 to-blue-700 hover:scale-105 transition-all">
               <Icon name={posting ? "X" : "Plus"} size={16} className="text-white" />
             </button>
           </div>
@@ -1537,8 +1537,8 @@ function StatusTab({ user }: { user: User }) {
             <div className="mt-3 animate-fade-in">
               <textarea value={myText} onChange={e => setMyText(e.target.value)}
                 placeholder="Что у вас происходит?" rows={2}
-                className="w-full bg-secondary/60 border border-white/10 rounded-2xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:border-purple-500/50 transition-all mb-2" />
-              <button className="w-full py-2.5 rounded-2xl bg-gradient-to-r from-violet-500 to-purple-600 text-white text-sm font-semibold">
+                className="w-full bg-secondary/60 border border-white/10 rounded-2xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:border-sky-500/50 transition-all mb-2" />
+              <button className="w-full py-2.5 rounded-2xl bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm font-semibold">
                 Опубликовать
               </button>
             </div>
@@ -1558,7 +1558,7 @@ function StatusTab({ user }: { user: User }) {
                 {s.text && <div className="text-xs text-muted-foreground truncate">{s.text}</div>}
                 <div className="text-xs text-muted-foreground">{s.time} назад</div>
               </div>
-              {!s.viewed && <div className="w-2 h-2 rounded-full bg-purple-400 animate-pulse-dot flex-shrink-0" />}
+              {!s.viewed && <div className="w-2 h-2 rounded-full bg-sky-400 animate-pulse-dot flex-shrink-0" />}
             </div>
           ))}
         </div>
@@ -1590,7 +1590,7 @@ function ContactsTab({ token }: { token: string }) {
           <Icon name="Search" size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input value={search} onChange={e => { setSearch(e.target.value); searchUsers(e.target.value); }}
             placeholder="Поиск по имени или номеру..."
-            className="w-full bg-secondary/60 border border-white/10 rounded-2xl pl-9 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-purple-500/50 transition-all" />
+            className="w-full bg-secondary/60 border border-white/10 rounded-2xl pl-9 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 transition-all" />
         </div>
       </div>
       <div className="flex-1 overflow-y-auto">
@@ -1605,7 +1605,7 @@ function ContactsTab({ token }: { token: string }) {
             </div>
           </div>
         )}
-        {loading && <div className="flex justify-center py-8"><div className="w-6 h-6 border-2 border-purple-500/30 border-t-purple-500 rounded-full animate-spin" /></div>}
+        {loading && <div className="flex justify-center py-8"><div className="w-6 h-6 border-2 border-sky-500/30 border-t-sky-500 rounded-full animate-spin" /></div>}
         {users.map((u, i) => (
           <div key={u.id} className="flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-all animate-fade-in"
             style={{ animationDelay: `${i * 0.04}s` }}>
@@ -1616,7 +1616,7 @@ function ContactsTab({ token }: { token: string }) {
             </div>
             <div className="flex gap-1">
               <button className="p-2 hover:bg-white/10 rounded-full transition-colors">
-                <Icon name="MessageCircle" size={16} className="text-purple-400" />
+                <Icon name="MessageCircle" size={16} className="text-sky-400" />
               </button>
               <button className="p-2 hover:bg-white/10 rounded-full transition-colors">
                 <Icon name="Phone" size={16} className="text-cyan-400" />
@@ -1687,12 +1687,12 @@ function SettingsTab({ onLogout, onTestSound }: { onLogout: () => void; onTestSo
               {s.items.map((item, ii) => (
                 <div key={item.label}
                   className={`flex items-center gap-3 px-4 py-3.5 ${ii < s.items.length - 1 ? "border-b border-white/5" : ""}`}>
-                  <div className="w-9 h-9 rounded-xl bg-violet-500/10 border border-white/5 flex items-center justify-center flex-shrink-0">
-                    <Icon name={item.icon} size={16} className="text-purple-400" />
+                  <div className="w-9 h-9 rounded-xl bg-blue-500/10 border border-white/5 flex items-center justify-center flex-shrink-0">
+                    <Icon name={item.icon} size={16} className="text-sky-400" />
                   </div>
                   <span className="flex-1 text-sm font-medium text-foreground">{item.label}</span>
                   <button onClick={() => item.set(!item.v)}
-                    className={`w-11 h-6 rounded-full transition-all duration-300 relative flex-shrink-0 ${item.v ? "bg-gradient-to-r from-violet-500 to-purple-600" : "bg-secondary"}`}>
+                    className={`w-11 h-6 rounded-full transition-all duration-300 relative flex-shrink-0 ${item.v ? "bg-gradient-to-r from-blue-600 to-blue-700" : "bg-secondary"}`}>
                     <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all duration-300 ${item.v ? "left-5" : "left-0.5"}`} />
                   </button>
                 </div>
@@ -1719,7 +1719,7 @@ function SettingsTab({ onLogout, onTestSound }: { onLogout: () => void; onTestSo
             </div>
             {notifPerm === "default" && (
               <button onClick={requestNotifPermission}
-                className="flex-shrink-0 px-3 py-1.5 rounded-xl bg-gradient-to-r from-violet-500 to-purple-600 text-white text-xs font-semibold hover:opacity-90 transition-all">
+                className="flex-shrink-0 px-3 py-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 text-white text-xs font-semibold hover:opacity-90 transition-all">
                 Включить
               </button>
             )}
@@ -1825,7 +1825,7 @@ function PinScreen({ mode, onSuccess, onCancel }: {
     <div className="flex flex-col h-screen max-w-md mx-auto items-center justify-center px-8 gap-8"
       style={{ background: "hsl(var(--background))" }}>
       <div className="flex flex-col items-center gap-3">
-        <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-500 to-purple-700 flex items-center justify-center shadow-[0_0_40px_rgba(168,85,247,0.4)]">
+        <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center shadow-[0_0_40px_rgba(0,119,182,0.4)]">
           <Icon name="Lock" size={28} className="text-white" />
         </div>
         <div className="text-center">
@@ -1839,7 +1839,7 @@ function PinScreen({ mode, onSuccess, onCancel }: {
         {[0,1,2,3].map(i => (
           <div key={i} className={`w-4 h-4 rounded-full border-2 transition-all duration-150
             ${displayPin.length > i
-              ? "bg-violet-500 border-violet-500 scale-110"
+              ? "bg-blue-500 border-blue-500 scale-110"
               : "border-white/30 bg-transparent"}`} />
         ))}
       </div>
@@ -2016,10 +2016,10 @@ export default function App() {
     return (
       <div className="flex items-center justify-center h-screen" style={{ background: "hsl(var(--background))" }}>
         <div className="flex flex-col items-center gap-4">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-violet-500 to-purple-700 flex items-center justify-center shadow-[0_0_40px_rgba(168,85,247,0.5)]">
+          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center shadow-[0_0_40px_rgba(0,119,182,0.5)]">
             <Icon name="Zap" size={28} className="text-white" />
           </div>
-          <div className="w-6 h-6 border-2 border-purple-500/30 border-t-purple-500 rounded-full animate-spin" />
+          <div className="w-6 h-6 border-2 border-sky-500/30 border-t-sky-500 rounded-full animate-spin" />
         </div>
       </div>
     );
@@ -2052,7 +2052,7 @@ export default function App() {
       style={{ background: "hsl(var(--background))" }}>
       <div className="fixed inset-0 max-w-md mx-auto pointer-events-none overflow-hidden">
         <div className="absolute -top-20 -right-20 w-64 h-64 rounded-full opacity-[0.04]"
-          style={{ background: "radial-gradient(circle, #a855f7, transparent)" }} />
+          style={{ background: "radial-gradient(circle, #0077b6, transparent)" }} />
         <div className="absolute -bottom-20 -left-20 w-64 h-64 rounded-full opacity-[0.04]"
           style={{ background: "radial-gradient(circle, #22d3ee, transparent)" }} />
       </div>

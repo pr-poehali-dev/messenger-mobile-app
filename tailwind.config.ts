@@ -95,8 +95,8 @@ export default {
 					to: { opacity: '1', transform: 'scale(1)' }
 				},
 				'glow-pulse': {
-					'0%, 100%': { boxShadow: '0 0 20px rgba(168, 85, 247, 0.4)' },
-					'50%': { boxShadow: '0 0 40px rgba(168, 85, 247, 0.8)' }
+					'0%, 100%': { boxShadow: '0 0 20px rgba(0, 180, 230, 0.4)' },
+					'50%': { boxShadow: '0 0 40px rgba(0, 180, 230, 0.8)' }
 				},
 				'float': {
 					'0%, 100%': { transform: 'translateY(0px)' },
