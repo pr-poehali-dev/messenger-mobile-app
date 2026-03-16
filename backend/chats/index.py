@@ -49,6 +49,37 @@ def handler(event: dict, context) -> dict:
 
         user_id = user["id"]
 
+        # Обновляем last_seen и статус online при каждом запросе
+        with conn.cursor() as cur:
+            cur.execute(f"UPDATE {SCHEMA}.users SET last_seen = NOW(), status = 'online' WHERE id = %s", (user_id,))
+        conn.commit()
+
+        # GET /presence?chat_id=X — статус и last_seen собеседника
+        if method == "GET" and "presence" in path:
+            params = event.get("queryStringParameters") or {}
+            chat_id = params.get("chat_id")
+            if not chat_id:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id required"})}
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT u.status, u.last_seen
+                    FROM {SCHEMA}.chat_members cm
+                    JOIN {SCHEMA}.users u ON u.id = cm.user_id
+                    WHERE cm.chat_id = %s AND cm.user_id != %s
+                    LIMIT 1
+                """, (chat_id, user_id))
+                row = cur.fetchone()
+            if not row:
+                return {"statusCode": 200, "headers": cors, "body": json.dumps({"status": "offline", "last_seen": None})}
+            # считаем online если last_seen < 2 минут назад
+            from datetime import datetime, timezone, timedelta
+            last_seen = row[1]
+            is_online = last_seen and (datetime.now(timezone.utc) - last_seen) < timedelta(minutes=2)
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({
+                "status": "online" if is_online else "offline",
+                "last_seen": last_seen.isoformat() if last_seen else None,
+            })}
+
         # GET /  — список чатов пользователя
         if method == "GET" and (path.endswith("/chats") or path.endswith("/chats/")):
             with conn.cursor() as cur:
@@ -65,14 +96,23 @@ def handler(event: dict, context) -> dict:
                         (SELECT m.created_at FROM {SCHEMA}.messages m WHERE m.chat_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_time,
                         (SELECT COUNT(*) FROM {SCHEMA}.messages m WHERE m.chat_id = c.id AND m.is_read = FALSE AND m.sender_id != %s) AS unread,
                         (SELECT COUNT(*) FROM {SCHEMA}.chat_members cm3 WHERE cm3.chat_id = c.id) AS member_count,
-                        cm.role
+                        cm.role,
+                        CASE WHEN c.is_group THEN NULL
+                             ELSE (SELECT u2.last_seen FROM {SCHEMA}.chat_members cm2
+                                   JOIN {SCHEMA}.users u2 ON u2.id = cm2.user_id
+                                   WHERE cm2.chat_id = c.id AND cm2.user_id != %s LIMIT 1)
+                        END AS peer_last_seen
                     FROM {SCHEMA}.chats c
                     JOIN {SCHEMA}.chat_members cm ON cm.chat_id = c.id AND cm.user_id = %s
                     ORDER BY last_time DESC NULLS LAST
-                """, (user_id, user_id, user_id))
+                """, (user_id, user_id, user_id, user_id))
                 rows = cur.fetchall()
+                from datetime import datetime, timezone, timedelta
+                now = datetime.now(timezone.utc)
                 chats = []
                 for r in rows:
+                    peer_last_seen = r[8]
+                    is_online = peer_last_seen and (now - peer_last_seen) < timedelta(minutes=2)
                     chats.append({
                         "id": r[0],
                         "name": r[1] or "Без названия",
@@ -82,6 +122,8 @@ def handler(event: dict, context) -> dict:
                         "unread": int(r[5]),
                         "member_count": int(r[6]),
                         "my_role": r[7],
+                        "peer_online": bool(is_online),
+                        "peer_last_seen": peer_last_seen.isoformat() if peer_last_seen else None,
                     })
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"chats": chats})}
 

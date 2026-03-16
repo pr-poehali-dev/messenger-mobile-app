@@ -52,6 +52,8 @@ interface Chat {
   member_count?: number;
   online?: boolean;
   pinned?: boolean;
+  peer_online?: boolean;
+  peer_last_seen?: string | null;
 }
 
 // ─── Mock data for non-chat tabs ──────────────────────────────────────────────
@@ -293,6 +295,36 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
   const isTypingSent = useRef(false);
 
   const isAtBottom = useRef(true);
+  const [peerStatus, setPeerStatus] = useState<{ online: boolean; last_seen: string | null }>({
+    online: !!chat.peer_online,
+    last_seen: chat.peer_last_seen ?? null,
+  });
+
+  useEffect(() => {
+    if (chat.is_group) return;
+    async function pollPresence() {
+      try {
+        const res = await fetch(`${CHATS_URL}/presence?chat_id=${chat.id}`, { headers: apiHeaders(token) });
+        const data = await res.json();
+        setPeerStatus({ online: data.status === "online", last_seen: data.last_seen });
+      } catch { /* ignore */ }
+    }
+    pollPresence();
+    const id = setInterval(pollPresence, 15000);
+    return () => clearInterval(id);
+  }, [chat.id, chat.is_group, token]);
+
+  function formatLastSeen(iso: string | null): string {
+    if (!iso) return "давно";
+    const d = new Date(iso);
+    const diffMs = Date.now() - d.getTime();
+    const mins = Math.floor(diffMs / 60000);
+    if (mins < 1) return "только что";
+    if (mins < 60) return `${mins} мин назад`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs} ч назад`;
+    return `${Math.floor(hrs / 24)} дн назад`;
+  }
 
   const loadMessages = useCallback(async (silent = false) => {
     try {
@@ -551,11 +583,16 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
             <Icon name="ArrowLeft" size={20} />
           </button>
           <button onClick={chat.is_group ? toggleMembers : undefined} className="flex items-center gap-3 flex-1 min-w-0">
-            <AvatarEl name={chat.name} size="sm" status={!chat.is_group ? "online" : undefined} />
+            <AvatarEl name={chat.name} size="sm" status={!chat.is_group ? (peerStatus.online ? "online" : "offline") : undefined} />
             <div className="flex-1 min-w-0 text-left">
               <div className="font-golos font-semibold text-foreground text-sm truncate">{chat.name}</div>
-              <div className="text-xs text-muted-foreground">
-                {chat.is_group ? `${chat.member_count ?? 0} участников · нажмите для управления` : "в сети"}
+              <div className="text-xs flex items-center gap-1">
+                {chat.is_group
+                  ? <span className="text-muted-foreground">{chat.member_count ?? 0} участников · нажмите для управления</span>
+                  : peerStatus.online
+                    ? <><span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block animate-pulse" /><span className="text-green-400">в сети</span></>
+                    : <span className="text-muted-foreground">был(а) {formatLastSeen(peerStatus.last_seen)}</span>
+                }
               </div>
             </div>
           </button>
