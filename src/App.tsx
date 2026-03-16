@@ -39,6 +39,8 @@ interface Message {
   file_size?: number | null;
   file_type?: string | null;
   reactions?: Reaction[];
+  is_edited?: boolean;
+  is_deleted?: boolean;
 }
 
 interface Chat {
@@ -287,6 +289,8 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
   const [pendingFile, setPendingFile] = useState<{ url: string; name: string; size: number; type: string } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [pickerMsgId, setPickerMsgId] = useState<number | string | null>(null);
+  const [menuMsgId, setMenuMsgId] = useState<number | string | null>(null);
+  const [editingMsg, setEditingMsg] = useState<{ id: number | string; text: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const msgRefs = useRef<Record<string | number, HTMLDivElement | null>>({});
@@ -469,6 +473,33 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
     } catch { /* keep optimistic */ }
   }
 
+  async function editMessage(msgId: number | string, newText: string) {
+    if (!newText.trim()) return;
+    setEditingMsg(null);
+    setMessages(prev => prev.map(m => m.id === msgId ? { ...m, text: newText, is_edited: true } : m));
+    try {
+      const res = await fetch(`${CHATS_URL}/edit-message`, {
+        method: "POST", headers: apiHeaders(token),
+        body: JSON.stringify({ message_id: msgId, text: newText }),
+      });
+      const data = await res.json();
+      if (data.text) {
+        setMessages(prev => prev.map(m => m.id === msgId ? { ...m, text: data.text, is_edited: true } : m));
+      }
+    } catch { /* keep optimistic */ }
+  }
+
+  async function deleteMessage(msgId: number | string) {
+    setMenuMsgId(null);
+    setMessages(prev => prev.map(m => m.id === msgId ? { ...m, is_deleted: true, text: "" } : m));
+    try {
+      await fetch(`${CHATS_URL}/delete-message`, {
+        method: "POST", headers: apiHeaders(token),
+        body: JSON.stringify({ message_id: msgId }),
+      });
+    } catch { /* keep optimistic */ }
+  }
+
   async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -536,7 +567,16 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery]);
 
+  useEffect(() => {
+    if (editingMsg) { setText(editingMsg.text); }
+  }, [editingMsg]);
+
   async function send() {
+    if (editingMsg) {
+      await editMessage(editingMsg.id, text);
+      setText("");
+      return;
+    }
     const t = text.trim();
     const pf = pendingFile;
     if (!t && !pf) return;
@@ -773,20 +813,47 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
                     <Icon name="Download" size={13} className="text-white/50 flex-shrink-0" />
                   </a>
                 )}
-                {msg.text && <p className="text-sm text-white leading-relaxed">{highlightText(msg.text)}</p>}
-                <div className={`flex items-center gap-1 mt-1 ${msg.out ? "justify-end" : "justify-start"}`}>
+                {msg.is_deleted
+                  ? <p className="text-sm text-white/40 italic">Сообщение удалено</p>
+                  : msg.text && <p className="text-sm text-white leading-relaxed">{highlightText(msg.text)}</p>
+                }
+                <div className={`flex items-center gap-1.5 mt-1 ${msg.out ? "justify-end" : "justify-start"}`}>
+                  {msg.is_edited && !msg.is_deleted && <span className="text-[10px] text-white/40 italic">изменено</span>}
                   <span className="text-[10px] text-white/50">{msg.time}</span>
                   {msg.out && <Icon name={msg.is_read ? "CheckCheck" : "Check"} size={12} className={msg.is_read ? "text-cyan-400" : "text-white/50"} />}
                 </div>
               </div>
 
-              {/* Reaction picker trigger */}
-              <button
-                onClick={() => setPickerMsgId(pickerMsgId === msg.id ? null : msg.id)}
-                className={`self-end mb-1 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-full hover:bg-white/10 flex-shrink-0 ${msg.out ? "order-first mr-1" : "ml-1"}`}>
-                <span className="text-sm leading-none">😊</span>
-              </button>
+              {/* Action buttons */}
+              <div className={`flex flex-col gap-1 self-end mb-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 ${msg.out ? "order-first mr-1 items-end" : "ml-1 items-start"}`}>
+                <button onClick={() => setPickerMsgId(pickerMsgId === msg.id ? null : msg.id)}
+                  className="p-1 rounded-full hover:bg-white/10 transition-colors">
+                  <span className="text-sm leading-none">😊</span>
+                </button>
+                {msg.out && !msg.is_deleted && (
+                  <button onClick={() => setMenuMsgId(menuMsgId === msg.id ? null : msg.id)}
+                    className="p-1 rounded-full hover:bg-white/10 transition-colors">
+                    <Icon name="MoreVertical" size={14} className="text-white/50" />
+                  </button>
+                )}
+              </div>
             </div>
+
+            {/* Context menu */}
+            {menuMsgId === msg.id && (
+              <div className={`flex gap-1 mb-1 animate-fade-in ${msg.out ? "self-end" : "self-start"}`}>
+                <button onClick={() => { setMenuMsgId(null); setEditingMsg({ id: msg.id, text: msg.text }); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl glass border border-white/10 text-xs text-foreground hover:bg-white/10 transition-all">
+                  <Icon name="Pencil" size={12} className="text-sky-400" />
+                  Изменить
+                </button>
+                <button onClick={() => deleteMessage(msg.id)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl glass border border-red-500/20 text-xs text-red-400 hover:bg-red-500/10 transition-all">
+                  <Icon name="Trash2" size={12} />
+                  Удалить
+                </button>
+              </div>
+            )}
 
             {/* Reaction picker popup */}
             {pickerMsgId === msg.id && (
@@ -842,6 +909,17 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
       )}
 
       <div className="flex-shrink-0 glass border-t border-white/5 px-4 pt-2 pb-3 space-y-2">
+        {/* Edit mode banner */}
+        {editingMsg && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-sky-500/10 border border-sky-500/20 animate-fade-in">
+            <Icon name="Pencil" size={13} className="text-sky-400 flex-shrink-0" />
+            <span className="text-xs text-sky-400 font-medium flex-1 truncate">Редактирование сообщения</span>
+            <button onClick={() => { setEditingMsg(null); setText(""); }}
+              className="p-0.5 rounded-full hover:bg-white/10 transition-colors">
+              <Icon name="X" size={13} className="text-muted-foreground" />
+            </button>
+          </div>
+        )}
         {/* Pending file preview */}
         {pendingFile && (
           <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-blue-500/10 border border-blue-500/20 animate-fade-in">

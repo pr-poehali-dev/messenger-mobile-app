@@ -142,7 +142,8 @@ def handler(event: dict, context) -> dict:
 
                 cur.execute(f"""
                     SELECT m.id, m.sender_id, u.name, m.text, m.is_read, m.created_at,
-                           m.file_url, m.file_name, m.file_size, m.file_type
+                           m.file_url, m.file_name, m.file_size, m.file_type,
+                           m.is_edited, m.hidden_at
                     FROM {SCHEMA}.messages m
                     JOIN {SCHEMA}.users u ON u.id = m.sender_id
                     WHERE m.chat_id = %s
@@ -190,6 +191,8 @@ def handler(event: dict, context) -> dict:
                 "file_size": r[8],
                 "file_type": r[9],
                 "reactions": reactions_map.get(r[0], []),
+                "is_edited": r[10],
+                "is_deleted": r[11] is not None,
             } for r in rows]
 
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"messages": messages})}
@@ -229,6 +232,43 @@ def handler(event: dict, context) -> dict:
                     }
                 })
             }
+
+        # POST /edit-message — редактировать своё сообщение
+        if method == "POST" and "edit-message" in path:
+            body = json.loads(event.get("body") or "{}")
+            message_id = body.get("message_id")
+            new_text = (body.get("text") or "").strip()
+            if not message_id or not new_text:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "message_id и text обязательны"})}
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    UPDATE {SCHEMA}.messages SET text = %s, is_edited = TRUE
+                    WHERE id = %s AND sender_id = %s AND hidden_at IS NULL
+                    RETURNING id, text, is_edited
+                """, (new_text, message_id, user_id))
+                row = cur.fetchone()
+            if not row:
+                return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Нет доступа или сообщение не найдено"})}
+            conn.commit()
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"id": row[0], "text": row[1], "is_edited": row[2]})}
+
+        # POST /delete-message — удалить своё сообщение (скрыть)
+        if method == "POST" and "delete-message" in path:
+            body = json.loads(event.get("body") or "{}")
+            message_id = body.get("message_id")
+            if not message_id:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "message_id обязателен"})}
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    UPDATE {SCHEMA}.messages SET hidden_at = NOW()
+                    WHERE id = %s AND sender_id = %s AND hidden_at IS NULL
+                    RETURNING id
+                """, (message_id, user_id))
+                row = cur.fetchone()
+            if not row:
+                return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Нет доступа или сообщение не найдено"})}
+            conn.commit()
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "id": row[0]})}
 
         # POST /react — поставить или снять реакцию
         if method == "POST" and "react" in path:
