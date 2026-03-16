@@ -267,7 +267,10 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
   const [text, setText] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
+  const [typists, setTypists] = useState<string[]>([]);
   const endRef = useRef<HTMLDivElement>(null);
+  const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isTypingSent = useRef(false);
 
   const isAtBottom = useRef(true);
 
@@ -291,6 +294,32 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
     const id = setInterval(() => loadMessages(true), 3000);
     return () => clearInterval(id);
   }, [loadMessages]);
+
+  // Poll typing status every 2s
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const res = await fetch(`${CHATS_URL}/typing?chat_id=${chat.id}`, { headers: apiHeaders(token) });
+        const data = await res.json();
+        setTypists(data.typists ?? []);
+      } catch { /* ignore */ }
+    };
+    poll();
+    const id = setInterval(poll, 2000);
+    return () => clearInterval(id);
+  }, [chat.id, token]);
+
+  function sendTyping() {
+    if (isTypingSent.current) return;
+    isTypingSent.current = true;
+    fetch(`${CHATS_URL}/typing`, {
+      method: "POST", headers: apiHeaders(token),
+      body: JSON.stringify({ chat_id: chat.id }),
+    }).catch(() => {});
+    // Reset flag after 3s so next keystroke fires again
+    if (typingTimer.current) clearTimeout(typingTimer.current);
+    typingTimer.current = setTimeout(() => { isTypingSent.current = false; }, 3000);
+  }
 
   // Scroll to bottom only when at bottom or new own message
   useEffect(() => {
@@ -382,12 +411,28 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
         <div ref={endRef} />
       </div>
 
+      {typists.length > 0 && (
+        <div className="flex-shrink-0 px-5 py-1.5 flex items-center gap-2 animate-fade-in">
+          <div className="flex gap-0.5 items-end">
+            {[0, 1, 2].map(i => (
+              <div key={i} className="w-1.5 h-1.5 rounded-full bg-purple-400"
+                style={{ animation: "typingBounce 1.2s ease-in-out infinite", animationDelay: `${i * 0.2}s` }} />
+            ))}
+          </div>
+          <span className="text-xs text-muted-foreground">
+            {typists.length === 1
+              ? `${typists[0]} печатает...`
+              : `${typists.join(", ")} печатают...`}
+          </span>
+        </div>
+      )}
+
       <div className="flex-shrink-0 glass border-t border-white/5 px-4 py-3">
         <div className="flex items-end gap-2">
           <button className="p-2 hover:bg-white/10 rounded-full transition-colors flex-shrink-0">
             <Icon name="Plus" size={20} className="text-muted-foreground" />
           </button>
-          <textarea value={text} onChange={e => setText(e.target.value)}
+          <textarea value={text} onChange={e => { setText(e.target.value); sendTyping(); }}
             onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
             placeholder="Сообщение..." rows={1}
             className="flex-1 bg-secondary/60 border border-white/10 rounded-2xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:border-purple-500/50 transition-all"

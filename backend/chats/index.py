@@ -175,6 +175,37 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"chat_id": chat_id})}
 
+        # POST /typing — сообщить что пользователь печатает
+        if method == "POST" and "typing" in path:
+            body = json.loads(event.get("body") or "{}")
+            chat_id = body.get("chat_id")
+            if not chat_id:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id required"})}
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    INSERT INTO typing_status (chat_id, user_id, user_name, updated_at)
+                    VALUES (%s, %s, %s, NOW())
+                    ON CONFLICT (chat_id, user_id) DO UPDATE SET updated_at = NOW()
+                """, (chat_id, user_id, user["name"]))
+            conn.commit()
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
+
+        # GET /typing — кто сейчас печатает в чате
+        if method == "GET" and "typing" in path:
+            params = event.get("queryStringParameters") or {}
+            chat_id = params.get("chat_id")
+            if not chat_id:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"typists": []})}
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT user_name FROM typing_status
+                    WHERE chat_id = %s AND user_id != %s
+                    AND updated_at > NOW() - INTERVAL '4 seconds'
+                """, (chat_id, user_id))
+                rows = cur.fetchall()
+            typists = [r[0] for r in rows]
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"typists": typists})}
+
         # GET /users — поиск пользователей для добавления
         if method == "GET" and "users" in path:
             params = event.get("queryStringParameters") or {}
