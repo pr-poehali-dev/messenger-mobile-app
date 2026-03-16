@@ -41,6 +41,9 @@ interface Message {
   reactions?: Reaction[];
   is_edited?: boolean;
   is_deleted?: boolean;
+  reply_to_id?: number | null;
+  reply_to_text?: string | null;
+  reply_to_name?: string | null;
 }
 
 interface Chat {
@@ -291,6 +294,7 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
   const [pickerMsgId, setPickerMsgId] = useState<number | string | null>(null);
   const [menuMsgId, setMenuMsgId] = useState<number | string | null>(null);
   const [editingMsg, setEditingMsg] = useState<{ id: number | string; text: string } | null>(null);
+  const [replyTo, setReplyTo] = useState<{ id: number | string; text: string; name: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const msgRefs = useRef<Record<string | number, HTMLDivElement | null>>({});
@@ -580,21 +584,27 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
     const t = text.trim();
     const pf = pendingFile;
     if (!t && !pf) return;
+    const rp = replyTo;
     const optimistic: Message = {
       id: `opt-${Date.now()}`, text: t,
       time: new Date().toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" }),
       out: true, is_read: false,
       file_url: pf?.url, file_name: pf?.name, file_size: pf?.size, file_type: pf?.type,
+      reply_to_id: rp ? Number(rp.id) : null,
+      reply_to_text: rp?.text ?? null,
+      reply_to_name: rp?.name ?? null,
     };
     setMessages(prev => [...prev, optimistic]);
     setText("");
     setPendingFile(null);
+    setReplyTo(null);
     try {
       const res = await fetch(`${CHATS_URL}/send`, {
         method: "POST", headers: apiHeaders(token),
         body: JSON.stringify({
           chat_id: chat.id, text: t,
           file_url: pf?.url, file_name: pf?.name, file_size: pf?.size, file_type: pf?.type,
+          reply_to_id: rp ? Number(rp.id) : null,
         }),
       });
       const data = await res.json();
@@ -790,6 +800,18 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
                 {!msg.out && chat.is_group && msg.sender_name && (
                   <div className="text-[10px] text-sky-400 font-semibold mb-1">{msg.sender_name}</div>
                 )}
+                {/* Reply quote */}
+                {msg.reply_to_id && (
+                  <button onClick={() => {
+                    const el = msgRefs.current[msg.reply_to_id!];
+                    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+                  }}
+                    className={`w-full text-left mb-2 pl-2 border-l-2 border-sky-400/60 rounded-r-lg py-1 pr-2 transition-all hover:opacity-80
+                      ${msg.out ? "bg-black/15" : "bg-black/10"}`}>
+                    <p className="text-[10px] font-semibold text-sky-300 mb-0.5 truncate">{msg.reply_to_name}</p>
+                    <p className="text-[11px] text-white/60 truncate">{msg.reply_to_text || "Сообщение"}</p>
+                  </button>
+                )}
                 {/* File attachment */}
                 {msg.file_url && msg.file_type?.startsWith("image/") && (
                   <a href={msg.file_url} target="_blank" rel="noopener noreferrer"
@@ -841,17 +863,26 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
 
             {/* Context menu */}
             {menuMsgId === msg.id && (
-              <div className={`flex gap-1 mb-1 animate-fade-in ${msg.out ? "self-end" : "self-start"}`}>
-                <button onClick={() => { setMenuMsgId(null); setEditingMsg({ id: msg.id, text: msg.text }); }}
+              <div className={`flex gap-1 mb-1 animate-fade-in flex-wrap ${msg.out ? "self-end justify-end" : "self-start justify-start"}`}>
+                <button onClick={() => { setMenuMsgId(null); setReplyTo({ id: msg.id, text: msg.is_deleted ? "Сообщение удалено" : msg.text, name: msg.sender_name || "Вы" }); }}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl glass border border-white/10 text-xs text-foreground hover:bg-white/10 transition-all">
-                  <Icon name="Pencil" size={12} className="text-sky-400" />
-                  Изменить
+                  <Icon name="Reply" size={12} className="text-sky-400" />
+                  Ответить
                 </button>
-                <button onClick={() => deleteMessage(msg.id)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl glass border border-red-500/20 text-xs text-red-400 hover:bg-red-500/10 transition-all">
-                  <Icon name="Trash2" size={12} />
-                  Удалить
-                </button>
+                {msg.out && !msg.is_deleted && (
+                  <button onClick={() => { setMenuMsgId(null); setEditingMsg({ id: msg.id, text: msg.text }); }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl glass border border-white/10 text-xs text-foreground hover:bg-white/10 transition-all">
+                    <Icon name="Pencil" size={12} className="text-sky-400" />
+                    Изменить
+                  </button>
+                )}
+                {msg.out && !msg.is_deleted && (
+                  <button onClick={() => deleteMessage(msg.id)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl glass border border-red-500/20 text-xs text-red-400 hover:bg-red-500/10 transition-all">
+                    <Icon name="Trash2" size={12} />
+                    Удалить
+                  </button>
+                )}
               </div>
             )}
 
@@ -909,6 +940,20 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
       )}
 
       <div className="flex-shrink-0 glass border-t border-white/5 px-4 pt-2 pb-3 space-y-2">
+        {/* Reply banner */}
+        {replyTo && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-sky-500/10 border border-sky-500/20 animate-fade-in">
+            <Icon name="Reply" size={13} className="text-sky-400 flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] font-semibold text-sky-400 truncate">{replyTo.name}</p>
+              <p className="text-xs text-muted-foreground truncate">{replyTo.text || "Сообщение"}</p>
+            </div>
+            <button onClick={() => setReplyTo(null)}
+              className="p-0.5 rounded-full hover:bg-white/10 transition-colors flex-shrink-0">
+              <Icon name="X" size={13} className="text-muted-foreground" />
+            </button>
+          </div>
+        )}
         {/* Edit mode banner */}
         {editingMsg && (
           <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-sky-500/10 border border-sky-500/20 animate-fade-in">

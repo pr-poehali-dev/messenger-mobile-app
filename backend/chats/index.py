@@ -143,7 +143,8 @@ def handler(event: dict, context) -> dict:
                 cur.execute(f"""
                     SELECT m.id, m.sender_id, u.name, m.text, m.is_read, m.created_at,
                            m.file_url, m.file_name, m.file_size, m.file_type,
-                           m.is_edited, m.hidden_at
+                           m.is_edited, m.hidden_at,
+                           m.reply_to_id, m.reply_to_text, m.reply_to_name
                     FROM {SCHEMA}.messages m
                     JOIN {SCHEMA}.users u ON u.id = m.sender_id
                     WHERE m.chat_id = %s
@@ -193,6 +194,9 @@ def handler(event: dict, context) -> dict:
                 "reactions": reactions_map.get(r[0], []),
                 "is_edited": r[10],
                 "is_deleted": r[11] is not None,
+                "reply_to_id": r[12],
+                "reply_to_text": r[13],
+                "reply_to_name": r[14],
             } for r in rows]
 
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"messages": messages})}
@@ -206,6 +210,7 @@ def handler(event: dict, context) -> dict:
             file_name = body.get("file_name") or None
             file_size = body.get("file_size") or None
             file_type = body.get("file_type") or None
+            reply_to_id = body.get("reply_to_id") or None
 
             if not chat_id or (not text and not file_url):
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id и text или file_url обязательны"})}
@@ -214,10 +219,29 @@ def handler(event: dict, context) -> dict:
                 cur.execute(f"SELECT 1 FROM {SCHEMA}.chat_members WHERE chat_id = %s AND user_id = %s", (chat_id, user_id))
                 if not cur.fetchone():
                     return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Нет доступа"})}
+
+                # Resolve reply_to snapshot
+                reply_text = None
+                reply_name = None
+                if reply_to_id:
+                    cur.execute(f"""
+                        SELECT m.text, u.name FROM {SCHEMA}.messages m
+                        JOIN {SCHEMA}.users u ON u.id = m.sender_id
+                        WHERE m.id = %s
+                    """, (reply_to_id,))
+                    rr = cur.fetchone()
+                    if rr:
+                        reply_text = (rr[0] or "")[:200]
+                        reply_name = rr[1]
+
                 cur.execute(
-                    f"""INSERT INTO {SCHEMA}.messages (chat_id, sender_id, text, file_url, file_name, file_size, file_type)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id, created_at""",
-                    (chat_id, user_id, text or "", file_url, file_name, file_size, file_type)
+                    f"""INSERT INTO {SCHEMA}.messages
+                        (chat_id, sender_id, text, file_url, file_name, file_size, file_type,
+                         reply_to_id, reply_to_text, reply_to_name)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id, created_at""",
+                    (chat_id, user_id, text or "", file_url, file_name, file_size, file_type,
+                     reply_to_id, reply_text, reply_name)
                 )
                 msg_id, created_at = cur.fetchone()
             conn.commit()
@@ -229,6 +253,7 @@ def handler(event: dict, context) -> dict:
                         "time": created_at.strftime("%H:%M"), "out": True,
                         "file_url": file_url, "file_name": file_name,
                         "file_size": file_size, "file_type": file_type,
+                        "reply_to_id": reply_to_id, "reply_to_text": reply_text, "reply_to_name": reply_name,
                     }
                 })
             }
