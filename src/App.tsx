@@ -1152,6 +1152,9 @@ function ProfileTab({ user, token, onLogout, onUserUpdate }: {
   const [saved, setSaved] = useState(false);
 
   const [changingPw, setChangingPw] = useState(false);
+  const [pinMode, setPinMode] = useState<"setup" | "change" | null>(null);
+  const [hasPin, setHasPin] = useState(!!localStorage.getItem(PIN_KEY));
+  const [pinSaved, setPinSaved] = useState(false);
   const [curPw, setCurPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const [confirmPw, setConfirmPw] = useState("");
@@ -1203,6 +1206,15 @@ function ProfileTab({ user, token, onLogout, onUserUpdate }: {
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } finally { setSaving(false); }
+  }
+
+  if (pinMode) {
+    return (
+      <PinScreen mode={pinMode} onSuccess={pin => {
+        if (pin) { localStorage.setItem(PIN_KEY, pin); setHasPin(true); setPinSaved(true); setTimeout(() => setPinSaved(false), 2500); }
+        setPinMode(null);
+      }} onCancel={() => setPinMode(null)} />
+    );
   }
 
   return (
@@ -1418,6 +1430,32 @@ function ProfileTab({ user, token, onLogout, onUserUpdate }: {
           <div className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-green-500/10 border border-green-500/20 animate-fade-in">
             <Icon name="ShieldCheck" size={16} className="text-green-400 flex-shrink-0" />
             <span className="text-sm text-green-300 font-medium">Пароль успешно изменён!</span>
+          </div>
+        )}
+
+        {/* Pin code */}
+        <button onClick={() => setPinMode(hasPin ? "change" : "setup")}
+          className="w-full glass rounded-2xl p-4 flex items-center gap-3 hover:bg-white/5 transition-all">
+          <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/20 flex items-center justify-center flex-shrink-0">
+            <Icon name="Shield" size={16} className="text-emerald-400" />
+          </div>
+          <div className="flex-1 text-left">
+            <span className="text-sm font-medium text-foreground">{hasPin ? "Изменить пин-код" : "Установить пин-код"}</span>
+            {hasPin && <p className="text-[11px] text-emerald-400 mt-0.5">Защита включена</p>}
+          </div>
+          {hasPin && (
+            <button onClick={e => { e.stopPropagation(); localStorage.removeItem(PIN_KEY); setHasPin(false); }}
+              className="text-[11px] text-muted-foreground hover:text-red-400 transition-colors px-2 py-1 rounded-lg hover:bg-red-500/10">
+              Снять
+            </button>
+          )}
+          {!hasPin && <Icon name="ChevronRight" size={16} className="text-muted-foreground" />}
+        </button>
+
+        {pinSaved && (
+          <div className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-green-500/10 border border-green-500/20 animate-fade-in">
+            <Icon name="ShieldCheck" size={16} className="text-green-400 flex-shrink-0" />
+            <span className="text-sm text-green-300 font-medium">Пин-код установлен!</span>
           </div>
         )}
 
@@ -1695,6 +1733,147 @@ function SettingsTab({ onLogout, onTestSound }: { onLogout: () => void; onTestSo
   );
 }
 
+// ─── Pin Screen ───────────────────────────────────────────────────────────────
+
+const PIN_KEY = "pulse_pin";
+const PIN_LOCKED_KEY = "pulse_pin_locked";
+
+function PinScreen({ mode, onSuccess, onCancel }: {
+  mode: "enter" | "setup" | "change";
+  onSuccess: (pin: string) => void;
+  onCancel?: () => void;
+}) {
+  const [pin, setPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+  const [step, setStep] = useState<"enter" | "confirm">(mode === "setup" || mode === "change" ? "enter" : "enter");
+  const [error, setError] = useState("");
+  const [shake, setShake] = useState(false);
+
+  const isSetup = mode === "setup" || mode === "change";
+  const title = mode === "enter" ? "Введите пин-код"
+    : step === "enter" ? "Создайте пин-код"
+    : "Повторите пин-код";
+  const subtitle = mode === "enter" ? "Для входа в приложение"
+    : step === "enter" ? "4 цифры для защиты"
+    : "Подтвердите пин-код";
+
+  function triggerShake() {
+    setShake(true);
+    setTimeout(() => setShake(false), 500);
+    if (navigator.vibrate) navigator.vibrate([30, 20, 30]);
+  }
+
+  function handleDigit(d: string) {
+    setError("");
+    const current = isSetup && step === "confirm" ? confirmPin : pin;
+    if (current.length >= 4) return;
+    const next = current + d;
+    if (isSetup && step === "confirm") {
+      setConfirmPin(next);
+      if (next.length === 4) {
+        if (next === pin) {
+          onSuccess(next);
+        } else {
+          triggerShake();
+          setError("Пин-коды не совпадают");
+          setTimeout(() => setConfirmPin(""), 600);
+        }
+      }
+    } else {
+      setPin(next);
+      if (next.length === 4) {
+        if (isSetup) {
+          setStep("confirm");
+        } else {
+          const saved = localStorage.getItem(PIN_KEY);
+          if (next === saved) {
+            onSuccess(next);
+          } else {
+            triggerShake();
+            setError("Неверный пин-код");
+            setTimeout(() => setPin(""), 600);
+          }
+        }
+      }
+    }
+  }
+
+  function handleDelete() {
+    setError("");
+    if (isSetup && step === "confirm") {
+      setConfirmPin(p => p.slice(0, -1));
+    } else {
+      setPin(p => p.slice(0, -1));
+    }
+  }
+
+  const displayPin = isSetup && step === "confirm" ? confirmPin : pin;
+
+  return (
+    <div className="flex flex-col h-screen max-w-md mx-auto items-center justify-center px-8 gap-8"
+      style={{ background: "hsl(var(--background))" }}>
+      <div className="flex flex-col items-center gap-3">
+        <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-500 to-purple-700 flex items-center justify-center shadow-[0_0_40px_rgba(168,85,247,0.4)]">
+          <Icon name="Lock" size={28} className="text-white" />
+        </div>
+        <div className="text-center">
+          <h2 className="font-golos font-bold text-xl text-foreground">{title}</h2>
+          <p className="text-sm text-muted-foreground mt-0.5">{subtitle}</p>
+        </div>
+      </div>
+
+      {/* Dots */}
+      <div className={`flex gap-4 ${shake ? "animate-[shake_0.4s_ease-in-out]" : ""}`}>
+        {[0,1,2,3].map(i => (
+          <div key={i} className={`w-4 h-4 rounded-full border-2 transition-all duration-150
+            ${displayPin.length > i
+              ? "bg-violet-500 border-violet-500 scale-110"
+              : "border-white/30 bg-transparent"}`} />
+        ))}
+      </div>
+
+      {error && (
+        <p className="text-sm text-red-400 -mt-4 animate-fade-in">{error}</p>
+      )}
+
+      {/* Numpad */}
+      <div className="grid grid-cols-3 gap-3 w-full max-w-[280px]">
+        {["1","2","3","4","5","6","7","8","9","","0","del"].map((key) => {
+          if (key === "") return <div key="empty" />;
+          return (
+            <button key={key}
+              onClick={() => key === "del" ? handleDelete() : handleDigit(key)}
+              className={`h-16 rounded-2xl flex items-center justify-center transition-all active:scale-95
+                ${key === "del"
+                  ? "bg-transparent hover:bg-white/5 text-muted-foreground"
+                  : "glass hover:bg-white/10 text-foreground font-semibold text-xl"}`}>
+              {key === "del"
+                ? <Icon name="Delete" size={22} className="text-muted-foreground" />
+                : key}
+            </button>
+          );
+        })}
+      </div>
+
+      {onCancel && (
+        <button onClick={onCancel}
+          className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+          Отмена
+        </button>
+      )}
+      {mode === "enter" && (
+        <button onClick={() => {
+          localStorage.removeItem(PIN_KEY);
+          localStorage.removeItem(PIN_LOCKED_KEY);
+          onSuccess("");
+        }} className="text-xs text-muted-foreground/50 hover:text-muted-foreground transition-colors">
+          Забыл пин-код · сбросить
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ─── Root App ─────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -1706,7 +1885,9 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("chats");
   const [chatsForBadge, setChatsForBadge] = useState<{ unread: number }[]>([]);
   const [authChecked, setAuthChecked] = useState(false);
-  const prevUnreadRef = useRef<Record<number, number>>({});
+  const [pinUnlocked, setPinUnlocked] = useState(false);
+  const prevUnreadRef = useRef<Record<number, number>>();
+  prevUnreadRef.current = prevUnreadRef.current ?? {};
 
   useEffect(() => {
     if (!token) { setAuthChecked(true); return; }
@@ -1836,6 +2017,11 @@ export default function App() {
         <AuthScreen onAuth={handleAuth} />
       </div>
     );
+  }
+
+  const hasPin = !!localStorage.getItem(PIN_KEY);
+  if (hasPin && !pinUnlocked) {
+    return <PinScreen mode="enter" onSuccess={() => setPinUnlocked(true)} />;
   }
 
   const tabs: Record<Tab, React.ReactNode> = {
