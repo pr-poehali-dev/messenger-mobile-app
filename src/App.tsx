@@ -300,8 +300,13 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
       const data = await res.json();
       if (data.messages) setMessages(prev => {
         const prevIds = new Set(prev.map(m => String(m.id)));
-        const hasNew = data.messages.some((m: Message) => !prevIds.has(String(m.id)));
-        if (!silent || hasNew) return data.messages;
+        const newIncoming = data.messages.filter((m: Message) => !prevIds.has(String(m.id)) && !m.out);
+        if (silent && newIncoming.length > 0) {
+          if (navigator.vibrate) navigator.vibrate([40, 30, 40]);
+        }
+        if (!silent || newIncoming.length > 0 || data.messages.some((m: Message) => !prevIds.has(String(m.id)))) {
+          if (!silent || data.messages.some((m: Message) => !prevIds.has(String(m.id)))) return data.messages;
+        }
         return prev;
       });
     } finally { if (!silent) setLoading(false); }
