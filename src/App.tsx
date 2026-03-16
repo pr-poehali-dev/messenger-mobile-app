@@ -303,6 +303,20 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
         const newIncoming = data.messages.filter((m: Message) => !prevIds.has(String(m.id)) && !m.out);
         if (silent && newIncoming.length > 0) {
           if (navigator.vibrate) navigator.vibrate([40, 30, 40]);
+          try {
+            const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.type = "sine";
+            osc.frequency.setValueAtTime(880, ctx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(660, ctx.currentTime + 0.08);
+            gain.gain.setValueAtTime(0.18, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
+            osc.start(ctx.currentTime);
+            osc.stop(ctx.currentTime + 0.18);
+          } catch { /* браузер может заблокировать без жеста */ }
         }
         if (!silent || newIncoming.length > 0 || data.messages.some((m: Message) => !prevIds.has(String(m.id)))) {
           if (!silent || data.messages.some((m: Message) => !prevIds.has(String(m.id)))) return data.messages;
