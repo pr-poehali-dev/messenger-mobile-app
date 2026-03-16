@@ -206,6 +206,74 @@ def handler(event: dict, context) -> dict:
             typists = [r[0] for r in rows]
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"typists": typists})}
 
+        # GET /members — список участников чата с ролями
+        if method == "GET" and "members" in path:
+            params = event.get("queryStringParameters") or {}
+            chat_id = params.get("chat_id")
+            if not chat_id:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id required"})}
+            with conn.cursor() as cur:
+                # Check membership
+                cur.execute(f"SELECT 1 FROM {SCHEMA}.chat_members WHERE chat_id = %s AND user_id = %s", (chat_id, user_id))
+                if not cur.fetchone():
+                    return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Нет доступа"})}
+                cur.execute(f"""
+                    SELECT u.id, u.name, u.status, cm.role
+                    FROM {SCHEMA}.chat_members cm
+                    JOIN {SCHEMA}.users u ON u.id = cm.user_id
+                    WHERE cm.chat_id = %s
+                    ORDER BY cm.role DESC, u.name
+                """, (chat_id,))
+                rows = cur.fetchall()
+            members = [{"id": r[0], "name": r[1], "status": r[2], "role": r[3], "is_me": r[0] == user_id} for r in rows]
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"members": members})}
+
+        # POST /leave — покинуть группу
+        if method == "POST" and "leave" in path:
+            body = json.loads(event.get("body") or "{}")
+            chat_id = body.get("chat_id")
+            if not chat_id:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id required"})}
+            with conn.cursor() as cur:
+                # Check it's a group
+                cur.execute(f"SELECT is_group FROM {SCHEMA}.chats WHERE id = %s", (chat_id,))
+                row = cur.fetchone()
+                if not row or not row[0]:
+                    return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Нельзя покинуть личный чат"})}
+                cur.execute(f"DELETE FROM {SCHEMA}.chat_members WHERE chat_id = %s AND user_id = %s", (chat_id, user_id))
+                # Add system message
+                cur.execute(
+                    f"INSERT INTO {SCHEMA}.messages (chat_id, sender_id, text) VALUES (%s, %s, %s)",
+                    (chat_id, user_id, f"👋 {user['name']} покинул(а) группу")
+                )
+            conn.commit()
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
+
+        # POST /kick — удалить участника (только для админов)
+        if method == "POST" and "kick" in path:
+            body = json.loads(event.get("body") or "{}")
+            chat_id = body.get("chat_id")
+            target_id = body.get("user_id")
+            if not chat_id or not target_id:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id и user_id обязательны"})}
+            with conn.cursor() as cur:
+                # Check caller is admin
+                cur.execute(f"SELECT role FROM {SCHEMA}.chat_members WHERE chat_id = %s AND user_id = %s", (chat_id, user_id))
+                row = cur.fetchone()
+                if not row or row[0] != "admin":
+                    return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Только администратор может удалять участников"})}
+                # Get target name
+                cur.execute(f"SELECT name FROM {SCHEMA}.users WHERE id = %s", (target_id,))
+                t = cur.fetchone()
+                target_name = t[0] if t else "Участник"
+                cur.execute(f"DELETE FROM {SCHEMA}.chat_members WHERE chat_id = %s AND user_id = %s", (chat_id, target_id))
+                cur.execute(
+                    f"INSERT INTO {SCHEMA}.messages (chat_id, sender_id, text) VALUES (%s, %s, %s)",
+                    (chat_id, user_id, f"🚫 {target_name} удалён(а) из группы")
+                )
+            conn.commit()
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
+
         # GET /users — поиск пользователей для добавления
         if method == "GET" and "users" in path:
             params = event.get("queryStringParameters") or {}

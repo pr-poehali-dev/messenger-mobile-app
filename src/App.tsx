@@ -268,6 +268,10 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [typists, setTypists] = useState<string[]>([]);
+  const [showMembers, setShowMembers] = useState(false);
+  const [members, setMembers] = useState<{ id: number; name: string; status: string; role: string; is_me: boolean }[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [leftGroup, setLeftGroup] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isTypingSent = useRef(false);
@@ -321,6 +325,45 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
     typingTimer.current = setTimeout(() => { isTypingSent.current = false; }, 3000);
   }
 
+  async function loadMembers() {
+    if (!chat.is_group) return;
+    setMembersLoading(true);
+    try {
+      const res = await fetch(`${CHATS_URL}/members?chat_id=${chat.id}`, { headers: apiHeaders(token) });
+      const data = await res.json();
+      if (data.members) setMembers(data.members);
+    } finally { setMembersLoading(false); }
+  }
+
+  function toggleMembers() {
+    if (!showMembers) loadMembers();
+    setShowMembers(v => !v);
+  }
+
+  async function leaveGroup() {
+    const ok = window.confirm(`Покинуть группу «${chat.name}»?`);
+    if (!ok) return;
+    await fetch(`${CHATS_URL}/leave`, {
+      method: "POST", headers: apiHeaders(token),
+      body: JSON.stringify({ chat_id: chat.id }),
+    });
+    setLeftGroup(true);
+    setTimeout(() => onBack(), 800);
+  }
+
+  async function kickMember(memberId: number, memberName: string) {
+    const ok = window.confirm(`Удалить ${memberName} из группы?`);
+    if (!ok) return;
+    await fetch(`${CHATS_URL}/kick`, {
+      method: "POST", headers: apiHeaders(token),
+      body: JSON.stringify({ chat_id: chat.id, user_id: memberId }),
+    });
+    setMembers(prev => prev.filter(m => m.id !== memberId));
+    loadMessages(true);
+  }
+
+  const myRole = members.find(m => m.is_me)?.role ?? chat.my_role;
+
   // Scroll to bottom only when at bottom or new own message
   useEffect(() => {
     if (isAtBottom.current) {
@@ -350,6 +393,17 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
     } catch { /* keep optimistic */ }
   }
 
+  if (leftGroup) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-4 animate-fade-in">
+        <div className="w-16 h-16 rounded-3xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
+          <Icon name="LogOut" size={28} className="text-violet-400" />
+        </div>
+        <p className="text-muted-foreground text-sm">Вы покинули группу</p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full animate-slide-in-right">
       <div className="flex-shrink-0 glass border-b border-white/5 px-4 py-3">
@@ -357,20 +411,81 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
           <button onClick={onBack} className="p-2 -ml-2 hover:bg-white/10 rounded-full transition-colors">
             <Icon name="ArrowLeft" size={20} />
           </button>
-          <AvatarEl name={chat.name} size="sm" status={!chat.is_group ? "online" : undefined} />
-          <div className="flex-1 min-w-0">
-            <div className="font-golos font-semibold text-foreground text-sm truncate">{chat.name}</div>
-            <div className="text-xs text-muted-foreground">
-              {chat.is_group ? `${chat.member_count ?? 0} участников` : "в сети"}
+          <button onClick={chat.is_group ? toggleMembers : undefined} className="flex items-center gap-3 flex-1 min-w-0">
+            <AvatarEl name={chat.name} size="sm" status={!chat.is_group ? "online" : undefined} />
+            <div className="flex-1 min-w-0 text-left">
+              <div className="font-golos font-semibold text-foreground text-sm truncate">{chat.name}</div>
+              <div className="text-xs text-muted-foreground">
+                {chat.is_group ? `${chat.member_count ?? 0} участников · нажмите для управления` : "в сети"}
+              </div>
             </div>
-          </div>
-          <button className="p-2 hover:bg-white/10 rounded-full transition-colors">
-            <Icon name="Video" size={18} className="text-cyan-400" />
           </button>
-          <button className="p-2 hover:bg-white/10 rounded-full transition-colors">
-            <Icon name="Phone" size={18} className="text-cyan-400" />
-          </button>
+          {chat.is_group && (
+            <button onClick={toggleMembers}
+              className={`p-2 rounded-full transition-colors ${showMembers ? "bg-violet-500/20 text-purple-400" : "hover:bg-white/10 text-muted-foreground"}`}>
+              <Icon name="Users" size={18} />
+            </button>
+          )}
+          {!chat.is_group && (
+            <>
+              <button className="p-2 hover:bg-white/10 rounded-full transition-colors">
+                <Icon name="Video" size={18} className="text-cyan-400" />
+              </button>
+              <button className="p-2 hover:bg-white/10 rounded-full transition-colors">
+                <Icon name="Phone" size={18} className="text-cyan-400" />
+              </button>
+            </>
+          )}
         </div>
+
+        {/* Members panel */}
+        {chat.is_group && showMembers && (
+          <div className="mt-3 animate-fade-in">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-semibold text-purple-400 uppercase tracking-wide">Участники</span>
+              <button onClick={leaveGroup}
+                className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 transition-colors px-2 py-1 rounded-lg hover:bg-red-500/10">
+                <Icon name="LogOut" size={12} />
+                Покинуть
+              </button>
+            </div>
+            {membersLoading ? (
+              <div className="flex justify-center py-3">
+                <div className="w-5 h-5 border-2 border-purple-500/30 border-t-purple-500 rounded-full animate-spin" />
+              </div>
+            ) : (
+              <div className="space-y-1 max-h-48 overflow-y-auto">
+                {members.map(m => {
+                  const roleColors: Record<string, string> = {
+                    admin: "text-yellow-400 bg-yellow-400/10 border-yellow-400/20",
+                    moderator: "text-cyan-400 bg-cyan-400/10 border-cyan-400/20",
+                    member: "text-muted-foreground bg-white/5 border-white/10",
+                  };
+                  const roleLabels: Record<string, string> = { admin: "Админ", moderator: "Модер", member: "Участник" };
+                  return (
+                    <div key={m.id} className="flex items-center gap-2.5 p-2 rounded-xl hover:bg-white/5 transition-all">
+                      <AvatarEl name={m.name} size="xs" status={m.status} />
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm font-medium text-foreground truncate">
+                          {m.is_me ? "Вы" : m.name}
+                        </span>
+                      </div>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${roleColors[m.role] ?? roleColors.member}`}>
+                        {roleLabels[m.role] ?? m.role}
+                      </span>
+                      {!m.is_me && myRole === "admin" && (
+                        <button onClick={() => kickMember(m.id, m.name)}
+                          className="p-1 rounded-full hover:bg-red-500/20 transition-colors flex-shrink-0 group">
+                          <Icon name="UserMinus" size={13} className="text-muted-foreground group-hover:text-red-400 transition-colors" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div
