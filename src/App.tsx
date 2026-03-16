@@ -457,8 +457,12 @@ function ChatsTab({ token, currentUserId }: { token: string; currentUserId: numb
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [createMode, setCreateMode] = useState<"direct" | "group">("direct");
   const [newChatSearch, setNewChatSearch] = useState("");
   const [foundUsers, setFoundUsers] = useState<{ id: number; name: string; phone: string; status: string }[]>([]);
+  const [selectedUsers, setSelectedUsers] = useState<{ id: number; name: string }[]>([]);
+  const [groupName, setGroupName] = useState("");
+  const [groupCreating, setGroupCreating] = useState(false);
 
   const loadChats = useCallback(async () => {
     try {
@@ -484,16 +488,43 @@ function ChatsTab({ token, currentUserId }: { token: string; currentUserId: numb
     if (data.users) setFoundUsers(data.users);
   }
 
+  function resetCreate() {
+    setCreating(false); setNewChatSearch(""); setFoundUsers([]);
+    setSelectedUsers([]); setGroupName(""); setCreateMode("direct");
+  }
+
   async function startChat(userId: number) {
     const res = await fetch(`${CHATS_URL}/create`, {
       method: "POST", headers: apiHeaders(token),
       body: JSON.stringify({ is_group: false, members: [userId] }),
     });
     const data = await res.json();
-    if (data.chat_id) {
-      await loadChats();
-      setCreating(false); setNewChatSearch(""); setFoundUsers([]);
-    }
+    if (data.chat_id) { await loadChats(); resetCreate(); }
+  }
+
+  async function createGroup() {
+    if (!groupName.trim() || selectedUsers.length < 1) return;
+    setGroupCreating(true);
+    try {
+      const res = await fetch(`${CHATS_URL}/create`, {
+        method: "POST", headers: apiHeaders(token),
+        body: JSON.stringify({
+          is_group: true,
+          name: groupName.trim(),
+          members: selectedUsers.map(u => u.id),
+        }),
+      });
+      const data = await res.json();
+      if (data.chat_id) { await loadChats(); resetCreate(); }
+    } finally { setGroupCreating(false); }
+  }
+
+  function toggleUser(u: { id: number; name: string; phone: string; status: string }) {
+    setSelectedUsers(prev =>
+      prev.find(s => s.id === u.id)
+        ? prev.filter(s => s.id !== u.id)
+        : [...prev, { id: u.id, name: u.name }]
+    );
   }
 
   const filtered = chats.filter(c => c.name.toLowerCase().includes(search.toLowerCase()));
@@ -508,38 +539,96 @@ function ChatsTab({ token, currentUserId }: { token: string; currentUserId: numb
       <div className="flex-shrink-0 px-4 pt-4 pb-3">
         <div className="flex items-center justify-between mb-4">
           <h1 className="text-2xl font-golos font-black text-gradient">Чаты</h1>
-          <button onClick={() => setCreating(!creating)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+          <button onClick={() => creating ? resetCreate() : setCreating(true)}
+            className="p-2 hover:bg-white/10 rounded-full transition-colors">
             <Icon name={creating ? "X" : "PenSquare"} size={20} className="text-purple-400" />
           </button>
         </div>
 
         {creating && (
-          <div className="glass rounded-2xl p-3 mb-3 animate-fade-in">
-            <p className="text-xs text-muted-foreground mb-2 font-medium">Найти пользователя для чата</p>
+          <div className="glass rounded-2xl p-3 mb-3 animate-fade-in space-y-3">
+            {/* Mode switcher */}
+            <div className="flex gap-1 p-1 glass rounded-xl">
+              {(["direct", "group"] as const).map(m => (
+                <button key={m} onClick={() => { setCreateMode(m); setSelectedUsers([]); setNewChatSearch(""); setFoundUsers([]); }}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-semibold transition-all
+                    ${createMode === m ? "bg-gradient-to-r from-violet-500 to-purple-600 text-white" : "text-muted-foreground hover:text-foreground"}`}>
+                  <Icon name={m === "direct" ? "MessageCircle" : "Users"} size={12} />
+                  {m === "direct" ? "Личный" : "Группа"}
+                </button>
+              ))}
+            </div>
+
+            {/* Group name field */}
+            {createMode === "group" && (
+              <div className="animate-fade-in">
+                <input value={groupName} onChange={e => setGroupName(e.target.value)}
+                  placeholder="Название группы..."
+                  className="w-full bg-secondary/60 border border-white/10 rounded-xl px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-purple-500/50 transition-all" />
+              </div>
+            )}
+
+            {/* Selected chips (group mode) */}
+            {createMode === "group" && selectedUsers.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 animate-fade-in">
+                {selectedUsers.map(u => (
+                  <div key={u.id} className="flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-violet-500/20 border border-violet-500/30">
+                    <span className="text-xs text-violet-300">{u.name.split(" ")[0]}</span>
+                    <button onClick={() => setSelectedUsers(prev => prev.filter(s => s.id !== u.id))}
+                      className="w-4 h-4 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors">
+                      <Icon name="X" size={10} className="text-violet-300" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Search */}
             <div className="relative">
               <Icon name="Search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <input value={newChatSearch}
                 onChange={e => { setNewChatSearch(e.target.value); searchUsers(e.target.value); }}
-                placeholder="Имя или номер телефона..."
+                placeholder={createMode === "group" ? "Добавить участников..." : "Имя или номер..."}
                 className="w-full bg-secondary/60 border border-white/10 rounded-xl pl-8 pr-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-purple-500/50 transition-all" />
             </div>
+
+            {/* Results */}
             {foundUsers.length > 0 && (
-              <div className="mt-2 space-y-1">
-                {foundUsers.map(u => (
-                  <button key={u.id} onClick={() => startChat(u.id)}
-                    className="w-full flex items-center gap-2 p-2 hover:bg-white/5 rounded-xl transition-all">
-                    <AvatarEl name={u.name} size="xs" status={u.status} />
-                    <div className="flex-1 min-w-0 text-left">
-                      <div className="text-sm font-medium text-foreground truncate">{u.name}</div>
-                      <div className="text-xs text-muted-foreground">{u.phone}</div>
-                    </div>
-                    <Icon name="MessageCircle" size={14} className="text-purple-400" />
-                  </button>
-                ))}
+              <div className="space-y-0.5 max-h-40 overflow-y-auto">
+                {foundUsers.map(u => {
+                  const selected = createMode === "group" && selectedUsers.some(s => s.id === u.id);
+                  return (
+                    <button key={u.id}
+                      onClick={() => createMode === "group" ? toggleUser(u) : startChat(u.id)}
+                      className={`w-full flex items-center gap-2 p-2 rounded-xl transition-all
+                        ${selected ? "bg-violet-500/15 border border-violet-500/20" : "hover:bg-white/5"}`}>
+                      <AvatarEl name={u.name} size="xs" status={u.status} />
+                      <div className="flex-1 min-w-0 text-left">
+                        <div className="text-sm font-medium text-foreground truncate">{u.name}</div>
+                        <div className="text-xs text-muted-foreground">{u.phone}</div>
+                      </div>
+                      {createMode === "group"
+                        ? <div className={`w-5 h-5 rounded-full border flex items-center justify-center flex-shrink-0 transition-all ${selected ? "bg-violet-500 border-violet-500" : "border-white/20"}`}>
+                            {selected && <Icon name="Check" size={10} className="text-white" />}
+                          </div>
+                        : <Icon name="MessageCircle" size={14} className="text-purple-400" />}
+                    </button>
+                  );
+                })}
               </div>
             )}
             {newChatSearch && foundUsers.length === 0 && (
-              <p className="text-xs text-muted-foreground text-center py-2">Пользователи не найдены</p>
+              <p className="text-xs text-muted-foreground text-center py-1">Пользователи не найдены</p>
+            )}
+
+            {/* Create group button */}
+            {createMode === "group" && selectedUsers.length > 0 && groupName.trim() && (
+              <button onClick={createGroup} disabled={groupCreating}
+                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-violet-500 to-purple-600 text-white text-sm font-semibold hover:opacity-90 transition-all disabled:opacity-60 flex items-center justify-center gap-2 animate-fade-in">
+                {groupCreating
+                  ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />Создаём...</>
+                  : <><Icon name="Users" size={14} />Создать группу «{groupName}» · {selectedUsers.length + 1} чел.</>}
+              </button>
             )}
           </div>
         )}
