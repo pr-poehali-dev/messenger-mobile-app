@@ -1632,13 +1632,25 @@ function ContactsTab({ token }: { token: string }) {
   );
 }
 
+function applyTheme(isDark: boolean) {
+  const root = document.documentElement;
+  if (isDark) { root.classList.remove("light"); }
+  else { root.classList.add("light"); }
+  localStorage.setItem("pulse_theme", isDark ? "dark" : "light");
+}
+
 function SettingsTab({ onLogout, onTestSound }: { onLogout: () => void; onTestSound: () => void }) {
   const [notif, setNotif] = useState(true);
   const [readR, setReadR] = useState(true);
-  const [dark, setDark] = useState(true);
+  const [dark, setDark] = useState(() => localStorage.getItem("pulse_theme") !== "light");
   const [notifPerm, setNotifPerm] = useState<NotificationPermission>(
     "Notification" in window ? Notification.permission : "denied"
   );
+
+  function toggleDark(val: boolean) {
+    setDark(val);
+    applyTheme(val);
+  }
 
   async function requestNotifPermission() {
     if (!("Notification" in window)) return;
@@ -1658,7 +1670,7 @@ function SettingsTab({ onLogout, onTestSound }: { onLogout: () => void; onTestSo
       { icon: "Eye", label: "Уведомления о прочтении", v: readR, set: setReadR },
     ]},
     { title: "Оформление", items: [
-      { icon: "Moon", label: "Тёмная тема", v: dark, set: setDark },
+      { icon: dark ? "Moon" : "Sun", label: dark ? "Тёмная тема" : "Светлая тема", v: dark, set: toggleDark },
     ]},
   ];
 
@@ -1877,6 +1889,8 @@ function PinScreen({ mode, onSuccess, onCancel }: {
 // ─── Root App ─────────────────────────────────────────────────────────────────
 
 export default function App() {
+  useEffect(() => { applyTheme(localStorage.getItem("pulse_theme") !== "light"); }, []);
+
   const [token, setToken] = useState<string | null>(() => localStorage.getItem("pulse_token"));
   const [user, setUser] = useState<User | null>(() => {
     const u = localStorage.getItem("pulse_user");

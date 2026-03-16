@@ -53,6 +53,50 @@
     --sidebar-border: 222 16% 18%;
     --sidebar-ring: 262 83% 68%;
   }
+
+  .light {
+    --background: 220 20% 97%;
+    --foreground: 222 30% 12%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 30% 12%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 30% 12%;
+
+    --primary: 262 83% 58%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 14% 92%;
+    --secondary-foreground: 222 20% 30%;
+
+    --muted: 220 14% 94%;
+    --muted-foreground: 215 16% 48%;
+
+    --accent: 196 90% 45%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 13% 88%;
+    --input: 220 14% 92%;
+    --ring: 262 83% 58%;
+
+    --msg-out: linear-gradient(135deg, #7c3aed, #a855f7);
+    --msg-in: #ececf4;
+    --surface-glass: rgba(0, 0, 0, 0.03);
+    --surface-glass-border: rgba(0, 0, 0, 0.08);
+
+    --sidebar-background: 220 20% 97%;
+    --sidebar-foreground: 222 30% 12%;
+    --sidebar-primary: 262 83% 58%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 14% 92%;
+    --sidebar-accent-foreground: 222 20% 30%;
+    --sidebar-border: 220 13% 88%;
+    --sidebar-ring: 262 83% 58%;
+  }
 }
 
 @layer base {
@@ -135,6 +179,14 @@
     background: var(--msg-in);
     border-radius: 18px 18px 18px 4px;
     border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .light .msg-bubble-in {
+    border: 1px solid rgba(0, 0, 0, 0.06);
+  }
+
+  .light .msg-bubble-in p {
+    color: hsl(222 30% 12%);
   }
 
   .nav-item-active {
