@@ -272,6 +272,11 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
   const [members, setMembers] = useState<{ id: number; name: string; status: string; role: string; is_me: boolean }[]>([]);
   const [membersLoading, setMembersLoading] = useState(false);
   const [leftGroup, setLeftGroup] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchIdx, setSearchIdx] = useState(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const msgRefs = useRef<Record<string | number, HTMLDivElement | null>>({});
   const endRef = useRef<HTMLDivElement>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isTypingSent = useRef(false);
@@ -371,6 +376,50 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
     }
   }, [messages]);
 
+  const searchMatches = searchQuery.trim()
+    ? messages.filter(m => m.text.toLowerCase().includes(searchQuery.toLowerCase()))
+    : [];
+
+  function openSearch() {
+    setSearchOpen(true);
+    setSearchQuery("");
+    setSearchIdx(0);
+    setTimeout(() => searchInputRef.current?.focus(), 50);
+  }
+
+  function closeSearch() {
+    setSearchOpen(false);
+    setSearchQuery("");
+    setSearchIdx(0);
+  }
+
+  function scrollToMatch(idx: number) {
+    const msg = searchMatches[idx];
+    if (!msg) return;
+    const el = msgRefs.current[msg.id];
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  function searchNext() {
+    const next = searchMatches.length === 0 ? 0 : (searchIdx + 1) % searchMatches.length;
+    setSearchIdx(next);
+    scrollToMatch(next);
+  }
+
+  function searchPrev() {
+    const prev = searchMatches.length === 0 ? 0 : (searchIdx - 1 + searchMatches.length) % searchMatches.length;
+    setSearchIdx(prev);
+    scrollToMatch(prev);
+  }
+
+  useEffect(() => {
+    if (searchMatches.length > 0) {
+      setSearchIdx(0);
+      scrollToMatch(0);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery]);
+
   async function send() {
     if (!text.trim()) return;
     const optimistic: Message = {
@@ -426,6 +475,10 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
               <Icon name="Users" size={18} />
             </button>
           )}
+          <button onClick={openSearch}
+            className={`p-2 rounded-full transition-colors ${searchOpen ? "bg-violet-500/20 text-purple-400" : "hover:bg-white/10 text-muted-foreground"}`}>
+            <Icon name="Search" size={18} />
+          </button>
           {!chat.is_group && (
             <>
               <button className="p-2 hover:bg-white/10 rounded-full transition-colors">
@@ -488,6 +541,39 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
         )}
       </div>
 
+      {searchOpen && (
+        <div className="flex-shrink-0 px-3 py-2 glass border-t border-white/5 animate-fade-in">
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Icon name="Search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <input
+                ref={searchInputRef}
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") { if (e.shiftKey) { searchPrev(); } else { searchNext(); } } else if (e.key === "Escape") { closeSearch(); } }}
+                placeholder="Поиск по сообщениям..."
+                className="w-full bg-secondary/60 border border-white/10 rounded-xl pl-9 pr-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-violet-500/50 transition-all" />
+            </div>
+            {searchQuery.trim() && (
+              <span className="text-xs text-muted-foreground whitespace-nowrap min-w-[52px] text-center">
+                {searchMatches.length === 0 ? "0 / 0" : `${searchIdx + 1} / ${searchMatches.length}`}
+              </span>
+            )}
+            <button onClick={searchPrev} disabled={searchMatches.length === 0}
+              className="p-1.5 rounded-lg hover:bg-white/10 disabled:opacity-30 transition-colors">
+              <Icon name="ChevronUp" size={16} className="text-muted-foreground" />
+            </button>
+            <button onClick={searchNext} disabled={searchMatches.length === 0}
+              className="p-1.5 rounded-lg hover:bg-white/10 disabled:opacity-30 transition-colors">
+              <Icon name="ChevronDown" size={16} className="text-muted-foreground" />
+            </button>
+            <button onClick={closeSearch} className="p-1.5 rounded-lg hover:bg-white/10 transition-colors">
+              <Icon name="X" size={16} className="text-muted-foreground" />
+            </button>
+          </div>
+        </div>
+      )}
+
       <div
         className="flex-1 overflow-y-auto px-4 py-4 space-y-2"
         style={{ background: "radial-gradient(ellipse at top, rgba(168,85,247,0.04) 0%, transparent 60%)" }}
@@ -508,21 +594,43 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
             <p className="text-muted-foreground text-sm">Начните переписку! 👋</p>
           </div>
         )}
-        {messages.map((msg, i) => (
-          <div key={msg.id} className={`flex ${msg.out ? "justify-end" : "justify-start"} animate-fade-in`}
-            style={{ animationDelay: `${i * 0.02}s` }}>
-            <div className={`max-w-[75%] px-4 py-2.5 ${msg.out ? "msg-bubble-out" : "msg-bubble-in"}`}>
-              {!msg.out && chat.is_group && msg.sender_name && (
-                <div className="text-[10px] text-purple-400 font-semibold mb-1">{msg.sender_name}</div>
-              )}
-              <p className="text-sm text-white leading-relaxed">{msg.text}</p>
-              <div className={`flex items-center gap-1 mt-1 ${msg.out ? "justify-end" : "justify-start"}`}>
-                <span className="text-[10px] text-white/50">{msg.time}</span>
-                {msg.out && <Icon name={msg.is_read ? "CheckCheck" : "Check"} size={12} className={msg.is_read ? "text-cyan-400" : "text-white/50"} />}
+        {messages.map((msg, i) => {
+          const isMatch = searchQuery.trim() && msg.text.toLowerCase().includes(searchQuery.toLowerCase());
+          const isActive = isMatch && searchMatches[searchIdx]?.id === msg.id;
+          const q = searchQuery.trim();
+
+          function highlightText(text: string) {
+            if (!q) return <>{text}</>;
+            const parts = text.split(new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi"));
+            return (
+              <>
+                {parts.map((part, pi) =>
+                  part.toLowerCase() === q.toLowerCase()
+                    ? <mark key={pi} className={`rounded px-0.5 ${isActive ? "bg-yellow-300 text-black" : "bg-yellow-300/40 text-white"}`}>{part}</mark>
+                    : part
+                )}
+              </>
+            );
+          }
+
+          return (
+            <div key={msg.id}
+              ref={el => { msgRefs.current[msg.id] = el; }}
+              className={`flex ${msg.out ? "justify-end" : "justify-start"} animate-fade-in`}
+              style={{ animationDelay: `${i * 0.02}s` }}>
+              <div className={`max-w-[75%] px-4 py-2.5 transition-all ${msg.out ? "msg-bubble-out" : "msg-bubble-in"} ${isActive ? "ring-2 ring-yellow-400/60" : isMatch ? "ring-1 ring-yellow-400/25" : ""}`}>
+                {!msg.out && chat.is_group && msg.sender_name && (
+                  <div className="text-[10px] text-purple-400 font-semibold mb-1">{msg.sender_name}</div>
+                )}
+                <p className="text-sm text-white leading-relaxed">{highlightText(msg.text)}</p>
+                <div className={`flex items-center gap-1 mt-1 ${msg.out ? "justify-end" : "justify-start"}`}>
+                  <span className="text-[10px] text-white/50">{msg.time}</span>
+                  {msg.out && <Icon name={msg.is_read ? "CheckCheck" : "Check"} size={12} className={msg.is_read ? "text-cyan-400" : "text-white/50"} />}
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
         <div ref={endRef} />
       </div>
 
