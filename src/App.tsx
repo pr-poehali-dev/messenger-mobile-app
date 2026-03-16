@@ -269,16 +269,35 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
   const [loading, setLoading] = useState(true);
   const endRef = useRef<HTMLDivElement>(null);
 
-  const loadMessages = useCallback(async () => {
+  const isAtBottom = useRef(true);
+
+  const loadMessages = useCallback(async (silent = false) => {
     try {
       const res = await fetch(`${CHATS_URL}/messages?chat_id=${chat.id}`, { headers: apiHeaders(token) });
       const data = await res.json();
-      if (data.messages) setMessages(data.messages);
-    } finally { setLoading(false); }
+      if (data.messages) setMessages(prev => {
+        const prevIds = new Set(prev.map(m => String(m.id)));
+        const hasNew = data.messages.some((m: Message) => !prevIds.has(String(m.id)));
+        if (!silent || hasNew) return data.messages;
+        return prev;
+      });
+    } finally { if (!silent) setLoading(false); }
   }, [chat.id, token]);
 
   useEffect(() => { loadMessages(); }, [loadMessages]);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+
+  // Poll for new messages every 3s
+  useEffect(() => {
+    const id = setInterval(() => loadMessages(true), 3000);
+    return () => clearInterval(id);
+  }, [loadMessages]);
+
+  // Scroll to bottom only when at bottom or new own message
+  useEffect(() => {
+    if (isAtBottom.current) {
+      endRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages]);
 
   async function send() {
     if (!text.trim()) return;
@@ -325,8 +344,13 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2"
-        style={{ background: "radial-gradient(ellipse at top, rgba(168,85,247,0.04) 0%, transparent 60%)" }}>
+      <div
+        className="flex-1 overflow-y-auto px-4 py-4 space-y-2"
+        style={{ background: "radial-gradient(ellipse at top, rgba(168,85,247,0.04) 0%, transparent 60%)" }}
+        onScroll={e => {
+          const el = e.currentTarget;
+          isAtBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+        }}>
         {loading && (
           <div className="flex justify-center py-8">
             <div className="w-6 h-6 border-2 border-purple-500/30 border-t-purple-500 rounded-full animate-spin" />
@@ -400,6 +424,13 @@ function ChatsTab({ token, currentUserId }: { token: string; currentUserId: numb
   }, [token]);
 
   useEffect(() => { loadChats(); }, [loadChats]);
+
+  // Poll chats every 5s when not in a conversation
+  useEffect(() => {
+    if (activeChat) return;
+    const id = setInterval(() => loadChats(), 5000);
+    return () => clearInterval(id);
+  }, [loadChats, activeChat]);
 
   async function searchUsers(q: string) {
     if (!q.trim()) { setFoundUsers([]); return; }
@@ -839,12 +870,21 @@ export default function App() {
       .finally(() => setAuthChecked(true));
   }, []);
 
-  useEffect(() => {
+  const refreshBadge = useCallback(() => {
     if (!token) return;
     fetch(`${CHATS_URL}/chats`, { headers: apiHeaders(token) })
       .then(r => r.json())
-      .then(d => { if (d.chats) setChatsForBadge(d.chats); });
-  }, [token, tab]);
+      .then(d => { if (d.chats) setChatsForBadge(d.chats); })
+      .catch(() => {});
+  }, [token]);
+
+  useEffect(() => { refreshBadge(); }, [refreshBadge, tab]);
+
+  // Poll badge every 5s
+  useEffect(() => {
+    const id = setInterval(refreshBadge, 5000);
+    return () => clearInterval(id);
+  }, [refreshBadge]);
 
   function handleAuth(newToken: string, newUser: User) {
     setToken(newToken); setUser(newUser);
