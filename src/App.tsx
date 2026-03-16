@@ -41,6 +41,7 @@ interface Message {
   reactions?: Reaction[];
   is_edited?: boolean;
   is_deleted?: boolean;
+  date?: string;
   reply_to_id?: number | null;
   reply_to_text?: string | null;
   reply_to_name?: string | null;
@@ -369,6 +370,17 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
       });
     } finally { if (!silent) setLoading(false); }
   }, [chat.id, token]);
+
+  function formatDateLabel(dateStr: string): string {
+    const d = new Date(dateStr);
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(today.getDate() - 1);
+    const toDay = (x: Date) => x.toISOString().slice(0, 10);
+    if (dateStr === toDay(today)) return "Сегодня";
+    if (dateStr === toDay(yesterday)) return "Вчера";
+    return d.toLocaleDateString("ru", { day: "numeric", month: "long", year: d.getFullYear() !== today.getFullYear() ? "numeric" : undefined });
+  }
 
   const loadOlder = useCallback(async () => {
     if (loadingMore || !hasMore) return;
@@ -819,6 +831,7 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
           </div>
         )}
         {messages.map((msg, i) => {
+          const showDateSep = msg.date && (i === 0 || messages[i - 1].date !== msg.date);
           const isMatch = searchQuery.trim() && msg.text.toLowerCase().includes(searchQuery.toLowerCase());
           const isActive = isMatch && searchMatches[searchIdx]?.id === msg.id;
           const q = searchQuery.trim();
@@ -838,7 +851,17 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
           }
 
           return (
-            <div key={msg.id}
+            <div key={msg.id}>
+            {showDateSep && (
+              <div className="flex items-center gap-3 my-3">
+                <div className="flex-1 h-px bg-white/8" />
+                <span className="text-[11px] font-medium text-muted-foreground px-3 py-1 rounded-full glass border border-white/8 whitespace-nowrap">
+                  {formatDateLabel(msg.date!)}
+                </span>
+                <div className="flex-1 h-px bg-white/8" />
+              </div>
+            )}
+            <div
               ref={el => { msgRefs.current[msg.id] = el; }}
               className={`flex flex-col ${msg.out ? "items-end" : "items-start"} animate-fade-in`}
               style={{ animationDelay: `${i * 0.02}s` }}>
@@ -963,6 +986,7 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
                 ))}
               </div>
             )}
+          </div>
           </div>
         );
         }

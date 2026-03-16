@@ -213,6 +213,7 @@ def handler(event: dict, context) -> dict:
                 "reactions": reactions_map.get(r[0], []),
                 "is_edited": r[10],
                 "is_deleted": r[11] is not None,
+                "date": r[5].strftime("%Y-%m-%d"),
                 "reply_to_id": r[12],
                 "reply_to_text": r[13],
                 "reply_to_name": r[14],
