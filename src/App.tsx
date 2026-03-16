@@ -154,10 +154,10 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User) => void })
       <div className="relative z-10 flex flex-col justify-center flex-1 px-6 py-8">
         <div className="text-center mb-8 animate-fade-in">
           <div className="w-20 h-20 mx-auto mb-4 rounded-3xl bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center shadow-[0_0_40px_rgba(0,119,182,0.5)]">
-            <Icon name="Zap" size={36} className="text-white" />
+            <Icon name="House" size={36} className="text-white" />
           </div>
-          <h1 className="text-3xl font-golos font-black text-gradient mb-1">Pulse</h1>
-          <p className="text-muted-foreground text-sm">Мессенджер нового поколения</p>
+          <h1 className="text-3xl font-golos font-black text-gradient mb-1">Наш Дом</h1>
+          <p className="text-muted-foreground text-sm">Мессенджер вашего сообщества</p>
         </div>
 
         <div className="glass rounded-2xl p-1 flex gap-1 mb-6 animate-fade-in" style={{ animationDelay: "0.05s" }}>
@@ -1657,7 +1657,7 @@ function SettingsTab({ onLogout, onTestSound }: { onLogout: () => void; onTestSo
     const perm = await Notification.requestPermission();
     setNotifPerm(perm);
     if (perm === "granted") {
-      new Notification("Pulse", { body: "Уведомления включены! 🚀", icon: "/favicon.svg" });
+      new Notification("Наш Дом", { body: "Уведомления включены! 🏠", icon: "/favicon.svg" });
     }
   }
 
@@ -2017,7 +2017,7 @@ export default function App() {
       <div className="flex items-center justify-center h-screen" style={{ background: "hsl(var(--background))" }}>
         <div className="flex flex-col items-center gap-4">
           <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center shadow-[0_0_40px_rgba(0,119,182,0.5)]">
-            <Icon name="Zap" size={28} className="text-white" />
+            <Icon name="House" size={28} className="text-white" />
           </div>
           <div className="w-6 h-6 border-2 border-sky-500/30 border-t-sky-500 rounded-full animate-spin" />
         </div>
