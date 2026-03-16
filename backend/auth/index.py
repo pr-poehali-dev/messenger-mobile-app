@@ -134,6 +134,36 @@ def handler(event: dict, context) -> dict:
             updated = {"id": row[0], "name": row[1], "phone": row[2], "bio": row[3] or "", "status": row[4]}
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"user": updated})}
 
+        # POST /change-password
+        if method == "POST" and path.endswith("/change-password"):
+            if not token:
+                return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
+            user = get_user_by_token(conn, token)
+            if not user:
+                return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Сессия истекла"})}
+            body = json.loads(event.get("body") or "{}")
+            current_pw = body.get("current_password", "")
+            new_pw = body.get("new_password", "")
+            if not current_pw or not new_pw:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Заполните все поля"})}
+            if len(new_pw) < 6:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Новый пароль минимум 6 символов"})}
+            current_hash = hash_password(current_pw)
+            new_hash = hash_password(new_pw)
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT id FROM {SCHEMA}.users WHERE id = %s AND password_hash = %s",
+                    (user["id"], current_hash)
+                )
+                if not cur.fetchone():
+                    return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Неверный текущий пароль"})}
+                cur.execute(
+                    f"UPDATE {SCHEMA}.users SET password_hash = %s WHERE id = %s",
+                    (new_hash, user["id"])
+                )
+            conn.commit()
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
+
         # POST /logout
         if method == "POST" and path.endswith("/logout"):
             if token:

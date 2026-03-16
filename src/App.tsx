@@ -825,8 +825,42 @@ function ProfileTab({ user, token, onLogout, onUserUpdate }: {
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
 
+  const [changingPw, setChangingPw] = useState(false);
+  const [curPw, setCurPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [pwSaving, setPwSaving] = useState(false);
+  const [pwError, setPwError] = useState("");
+  const [pwSaved, setPwSaved] = useState(false);
+  const [showCur, setShowCur] = useState(false);
+  const [showNew, setShowNew] = useState(false);
+
   function startEdit() { setName(user.name); setBio(user.bio ?? ""); setError(""); setEditing(true); }
   function cancelEdit() { setEditing(false); setError(""); }
+
+  function cancelPw() {
+    setChangingPw(false); setCurPw(""); setNewPw(""); setConfirmPw("");
+    setPwError(""); setShowCur(false); setShowNew(false);
+  }
+
+  async function changePassword() {
+    setPwError("");
+    if (!curPw || !newPw || !confirmPw) { setPwError("Заполните все поля"); return; }
+    if (newPw.length < 6) { setPwError("Новый пароль минимум 6 символов"); return; }
+    if (newPw !== confirmPw) { setPwError("Пароли не совпадают"); return; }
+    setPwSaving(true);
+    try {
+      const res = await fetch(`${AUTH_URL}/change-password`, {
+        method: "POST", headers: apiHeaders(token),
+        body: JSON.stringify({ current_password: curPw, new_password: newPw }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setPwError(data.error || "Ошибка"); return; }
+      cancelPw();
+      setPwSaved(true);
+      setTimeout(() => setPwSaved(false), 2500);
+    } finally { setPwSaving(false); }
+  }
 
   async function saveProfile() {
     if (!name.trim()) { setError("Имя не может быть пустым"); return; }
@@ -965,6 +999,100 @@ function ProfileTab({ user, token, onLogout, onUserUpdate }: {
             <span className="text-sm font-medium text-foreground">Редактировать профиль</span>
             <Icon name="ChevronRight" size={16} className="text-muted-foreground ml-auto" />
           </button>
+        )}
+
+        {/* Change password */}
+        {!changingPw ? (
+          <button onClick={() => setChangingPw(true)}
+            className="w-full glass rounded-2xl p-4 flex items-center gap-3 hover:bg-white/5 transition-all">
+            <div className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-500/20 flex items-center justify-center flex-shrink-0">
+              <Icon name="KeyRound" size={16} className="text-cyan-400" />
+            </div>
+            <span className="text-sm font-medium text-foreground">Сменить пароль</span>
+            <Icon name="ChevronRight" size={16} className="text-muted-foreground ml-auto" />
+          </button>
+        ) : (
+          <div className="glass rounded-3xl p-4 space-y-3 animate-fade-in border border-cyan-500/20">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Icon name="KeyRound" size={14} className="text-cyan-400" />
+                <span className="text-xs font-semibold text-cyan-400 uppercase tracking-wide">Смена пароля</span>
+              </div>
+              <button onClick={cancelPw} className="p-1 hover:bg-white/10 rounded-full transition-colors">
+                <Icon name="X" size={14} className="text-muted-foreground" />
+              </button>
+            </div>
+
+            {[
+              { label: "Текущий пароль", val: curPw, set: setCurPw, show: showCur, toggleShow: () => setShowCur(v => !v) },
+              { label: "Новый пароль", val: newPw, set: setNewPw, show: showNew, toggleShow: () => setShowNew(v => !v) },
+              { label: "Повторите новый пароль", val: confirmPw, set: setConfirmPw, show: showNew, toggleShow: () => setShowNew(v => !v) },
+            ].map((f, idx) => (
+              <div key={f.label} className="space-y-1">
+                <label className="text-xs text-muted-foreground font-medium">{f.label}</label>
+                <div className="relative">
+                  <Icon name="Lock" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    value={f.val} onChange={e => f.set(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && changePassword()}
+                    type={f.show ? "text" : "password"}
+                    placeholder={idx === 0 ? "Введите текущий пароль" : idx === 1 ? "Минимум 6 символов" : "Повторите пароль"}
+                    className="w-full bg-secondary/60 border border-white/10 rounded-xl pl-9 pr-10 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-cyan-500/50 transition-all" />
+                  {idx <= 1 && (
+                    <button onClick={f.toggleShow} tabIndex={-1}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
+                      <Icon name={f.show ? "EyeOff" : "Eye"} size={14} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            {/* Strength indicator */}
+            {newPw.length > 0 && (
+              <div className="space-y-1 animate-fade-in">
+                <div className="flex gap-1">
+                  {[...Array(4)].map((_, i) => {
+                    const strength = newPw.length >= 12 ? 4 : newPw.length >= 8 ? 3 : newPw.length >= 6 ? 2 : 1;
+                    const colors = ["bg-red-400", "bg-orange-400", "bg-yellow-400", "bg-green-400"];
+                    return (
+                      <div key={i} className={`h-1 flex-1 rounded-full transition-all ${i < strength ? colors[strength - 1] : "bg-white/10"}`} />
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] text-muted-foreground">
+                  {newPw.length < 6 ? "Слишком короткий" : newPw.length < 8 ? "Слабый" : newPw.length < 12 ? "Хороший" : "Надёжный"}
+                </p>
+              </div>
+            )}
+
+            {pwError && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-500/10 border border-red-500/20 animate-fade-in">
+                <Icon name="AlertCircle" size={13} className="text-red-400 flex-shrink-0" />
+                <span className="text-xs text-red-300">{pwError}</span>
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <button onClick={cancelPw}
+                className="flex-1 py-2.5 rounded-xl glass text-sm font-medium text-muted-foreground hover:text-foreground transition-all">
+                Отмена
+              </button>
+              <button onClick={changePassword} disabled={pwSaving}
+                className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white text-sm font-semibold hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-60 flex items-center justify-center gap-2">
+                {pwSaving
+                  ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />Меняем...</>
+                  : <><Icon name="Check" size={14} />Изменить</>}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {pwSaved && (
+          <div className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-green-500/10 border border-green-500/20 animate-fade-in">
+            <Icon name="ShieldCheck" size={16} className="text-green-400 flex-shrink-0" />
+            <span className="text-sm text-green-300 font-medium">Пароль успешно изменён!</span>
+          </div>
         )}
 
         <button onClick={onLogout}
