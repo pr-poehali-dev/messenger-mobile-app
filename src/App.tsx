@@ -277,8 +277,8 @@ function BottomNav({ active, onChange, unreadCount }: {
 
 // ─── Chat Screen ──────────────────────────────────────────────────────────────
 
-function ChatScreen({ chat, token, currentUserId, onBack }: {
-  chat: Chat; token: string; currentUserId: number; onBack: () => void;
+function ChatScreen({ chat, token, currentUserId, onBack, allChats }: {
+  chat: Chat; token: string; currentUserId: number; onBack: () => void; allChats: Chat[];
 }) {
   const [text, setText] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -292,6 +292,10 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchIdx, setSearchIdx] = useState(0);
   const [showStats, setShowStats] = useState(false);
+  const [forwardMsg, setForwardMsg] = useState<{ text: string; file_url?: string | null; file_name?: string | null; file_type?: string | null } | null>(null);
+  const [forwardSearch, setForwardSearch] = useState("");
+  const [forwarding, setForwarding] = useState<number | null>(null);
+  const [forwardDone, setForwardDone] = useState<number | null>(null);
   const [pinnedMsg, setPinnedMsg] = useState<{ id: number; text: string; sender_name: string; file_type: string | null } | null>(null);
   const [stats, setStats] = useState<{
     total_messages: number; total_files: number; total_photos: number;
@@ -524,6 +528,23 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
         setMessages(prev => prev.map(m => m.id === msgId ? { ...m, reactions: data.reactions } : m));
       }
     } catch { /* keep optimistic */ }
+  }
+
+  async function forwardTo(targetChatId: number) {
+    if (!forwardMsg) return;
+    setForwarding(targetChatId);
+    try {
+      await fetch(`${CHATS_URL}/send`, {
+        method: "POST", headers: apiHeaders(token),
+        body: JSON.stringify({
+          chat_id: targetChatId,
+          text: forwardMsg.text || "",
+          file_url: forwardMsg.file_url, file_name: forwardMsg.file_name, file_type: forwardMsg.file_type,
+        }),
+      });
+      setForwardDone(targetChatId);
+      setTimeout(() => { setForwardDone(null); setForwardMsg(null); setForwardSearch(""); }, 1200);
+    } finally { setForwarding(null); }
   }
 
   async function pinMessage(msgId: number | string, pin: boolean) {
@@ -1051,6 +1072,13 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
                   Ответить
                 </button>
                 {!msg.is_deleted && (
+                  <button onClick={() => { setMenuMsgId(null); setForwardMsg({ text: msg.text, file_url: msg.file_url, file_name: msg.file_name, file_type: msg.file_type }); setForwardSearch(""); }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl glass border border-white/10 text-xs text-foreground hover:bg-white/10 transition-all">
+                    <Icon name="Forward" size={12} className="text-sky-400" />
+                    Переслать
+                  </button>
+                )}
+                {!msg.is_deleted && (
                   <button onClick={() => pinMessage(msg.id, !msg.is_pinned)}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl glass border text-xs transition-all
                       ${msg.is_pinned ? "border-amber-500/20 text-amber-400 hover:bg-amber-500/10" : "border-white/10 text-foreground hover:bg-white/10"}`}>
@@ -1199,6 +1227,61 @@ function ChatScreen({ chat, token, currentUserId, onBack }: {
           </button>
         </div>
       </div>
+
+      {/* Forward modal */}
+      {forwardMsg && (
+        <div className="absolute inset-0 z-50 flex flex-col bg-background/95 backdrop-blur-sm animate-fade-in">
+          <div className="flex items-center gap-3 px-4 py-4 glass border-b border-white/5">
+            <button onClick={() => { setForwardMsg(null); setForwardSearch(""); }}
+              className="p-2 -ml-2 hover:bg-white/10 rounded-full transition-colors">
+              <Icon name="ArrowLeft" size={20} />
+            </button>
+            <div>
+              <h2 className="font-golos font-bold text-foreground text-sm">Переслать сообщение</h2>
+              <p className="text-xs text-muted-foreground truncate max-w-[220px]">
+                {forwardMsg.file_type?.startsWith("image/") ? "📷 Фото" : forwardMsg.file_type ? "📎 Файл" : forwardMsg.text || "Сообщение"}
+              </p>
+            </div>
+          </div>
+
+          <div className="px-4 py-3">
+            <div className="relative">
+              <Icon name="Search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <input value={forwardSearch} onChange={e => setForwardSearch(e.target.value)}
+                placeholder="Поиск чата..."
+                className="w-full bg-secondary/60 border border-white/10 rounded-xl pl-9 pr-4 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 transition-all" />
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-4 space-y-1 pb-4">
+            {allChats
+              .filter(c => c.id !== chat.id && c.name.toLowerCase().includes(forwardSearch.toLowerCase()))
+              .map(c => {
+                const done = forwardDone === c.id;
+                const loading = forwarding === c.id;
+                return (
+                  <button key={c.id} onClick={() => !loading && !done && forwardTo(c.id)}
+                    className={`w-full flex items-center gap-3 px-3 py-3 rounded-2xl transition-all
+                      ${done ? "bg-green-500/10 border border-green-500/20" : "hover:bg-white/5 glass"}`}>
+                    <AvatarEl name={c.name} size="sm" />
+                    <div className="flex-1 text-left min-w-0">
+                      <p className="text-sm font-medium text-foreground truncate">{c.name}</p>
+                      {c.is_group && <p className="text-xs text-muted-foreground">{c.member_count} участников</p>}
+                    </div>
+                    <div className="flex-shrink-0">
+                      {done
+                        ? <Icon name="CheckCheck" size={16} className="text-green-400" />
+                        : loading
+                          ? <div className="w-4 h-4 border-2 border-sky-500/30 border-t-sky-500 rounded-full animate-spin" />
+                          : <Icon name="Forward" size={16} className="text-muted-foreground" />
+                      }
+                    </div>
+                  </button>
+                );
+              })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1285,7 +1368,7 @@ function ChatsTab({ token, currentUserId }: { token: string; currentUserId: numb
 
   if (activeChat) {
     return <ChatScreen chat={activeChat} token={token} currentUserId={currentUserId}
-      onBack={() => { setActiveChat(null); loadChats(); }} />;
+      onBack={() => { setActiveChat(null); loadChats(); }} allChats={chats} />;
   }
 
   return (
