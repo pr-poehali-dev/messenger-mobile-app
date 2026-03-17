@@ -506,6 +506,36 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats }: {
     }
   }, [messages]);
 
+  // Mark incoming messages as read when they appear on screen
+  useEffect(() => {
+    const unread = messages.filter(m => !m.out && !m.is_read && typeof m.id === "number");
+    if (!unread.length) return;
+
+    const markRead = (msgId: number) => {
+      fetch(`${CHATS_URL}/read`, {
+        method: "POST", headers: apiHeaders(token),
+        body: JSON.stringify({ message_id: msgId }),
+      });
+      setMessages(prev => prev.map(m => m.id === msgId ? { ...m, is_read: true } : m));
+    };
+
+    const observer = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          const id = Number((entry.target as HTMLElement).dataset.msgId);
+          if (id) { markRead(id); observer.unobserve(entry.target); }
+        }
+      });
+    }, { threshold: 0.5, root: scrollContainerRef.current });
+
+    unread.forEach(m => {
+      const el = msgRefs.current[m.id];
+      if (el) observer.observe(el);
+    });
+
+    return () => observer.disconnect();
+  }, [messages, token]);
+
   const EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🔥", "👏", "🎉"];
 
   async function sendReaction(msgId: number | string, emoji: string) {
@@ -1078,6 +1108,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats }: {
             )}
             <div
               ref={el => { msgRefs.current[msg.id] = el; }}
+              data-msg-id={msg.id}
               className={`flex flex-col ${msg.out ? "items-end" : "items-start"} animate-fade-in`}
               style={{ animationDelay: `${i * 0.02}s` }}>
               <div className={`flex items-end gap-1 group ${msg.out ? "flex-row-reverse" : "flex-row"}`}>
