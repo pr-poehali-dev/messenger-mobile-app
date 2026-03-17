@@ -106,10 +106,11 @@ def handler(event: dict, context) -> dict:
                              ELSE (SELECT u2.last_seen FROM {SCHEMA}.chat_members cm2
                                    JOIN {SCHEMA}.users u2 ON u2.id = cm2.user_id
                                    WHERE cm2.chat_id = c.id AND cm2.user_id != %s LIMIT 1)
-                        END AS peer_last_seen
+                        END AS peer_last_seen,
+                        cm.pinned
                     FROM {SCHEMA}.chats c
                     JOIN {SCHEMA}.chat_members cm ON cm.chat_id = c.id AND cm.user_id = %s
-                    ORDER BY last_time DESC NULLS LAST
+                    ORDER BY cm.pinned DESC, last_time DESC NULLS LAST
                 """, (user_id, user_id, user_id, user_id))
                 rows = cur.fetchall()
                 from datetime import datetime, timezone, timedelta
@@ -129,6 +130,7 @@ def handler(event: dict, context) -> dict:
                         "my_role": r[7],
                         "peer_online": bool(is_online),
                         "peer_last_seen": peer_last_seen.isoformat() if peer_last_seen else None,
+                        "pinned": bool(r[9]),
                     })
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"chats": chats})}
 
@@ -673,6 +675,21 @@ def handler(event: dict, context) -> dict:
         # GET /vapid-public-key — отдать публичный VAPID ключ фронтенду
         if method == "GET" and "vapid-public-key" in path:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"public_key": os.environ.get("VAPID_PUBLIC_KEY", "")})}
+
+        # POST /pin-chat — закрепить / открепить чат для текущего пользователя
+        if method == "POST" and "pin-chat" in path:
+            body = json.loads(event.get("body") or "{}")
+            chat_id = body.get("chat_id")
+            pin = body.get("pin", True)
+            if not chat_id:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id обязателен"})}
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    UPDATE {SCHEMA}.chat_members SET pinned = %s
+                    WHERE chat_id = %s AND user_id = %s
+                """, (pin, chat_id, user_id))
+            conn.commit()
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "pinned": pin})}
 
         # POST /subscribe — сохранить push-подписку устройства
         if method == "POST" and "subscribe" in path:

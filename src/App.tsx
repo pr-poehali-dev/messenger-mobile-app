@@ -1470,6 +1470,8 @@ function ChatsTab({ token, currentUserId, onMessageRead }: { token: string; curr
   const [selectedUsers, setSelectedUsers] = useState<{ id: number; name: string }[]>([]);
   const [groupName, setGroupName] = useState("");
   const [groupCreating, setGroupCreating] = useState(false);
+  const [contextChat, setContextChat] = useState<Chat | null>(null);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadChats = useCallback(async () => {
     try {
@@ -1532,6 +1534,16 @@ function ChatsTab({ token, currentUserId, onMessageRead }: { token: string; curr
         ? prev.filter(s => s.id !== u.id)
         : [...prev, { id: u.id, name: u.name }]
     );
+  }
+
+  async function togglePin(chat: Chat) {
+    const pin = !chat.pinned;
+    setChats(prev => prev.map(c => c.id === chat.id ? { ...c, pinned: pin } : c));
+    await fetch(`${CHATS_URL}/pin-chat`, {
+      method: "POST", headers: apiHeaders(token),
+      body: JSON.stringify({ chat_id: chat.id, pin }),
+    });
+    setContextChat(null);
   }
 
   const filtered = chats
@@ -1679,7 +1691,13 @@ function ChatsTab({ token, currentUserId, onMessageRead }: { token: string; curr
             ? new Date(chat.last_time).toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" })
             : "";
           return (
-            <button key={chat.id} onClick={() => setActiveChat(chat)}
+            <button key={chat.id}
+              onClick={() => setActiveChat(chat)}
+              onMouseDown={() => { longPressTimer.current = setTimeout(() => setContextChat(chat), 500); }}
+              onMouseUp={() => { if (longPressTimer.current) clearTimeout(longPressTimer.current); }}
+              onMouseLeave={() => { if (longPressTimer.current) clearTimeout(longPressTimer.current); }}
+              onTouchStart={() => { longPressTimer.current = setTimeout(() => setContextChat(chat), 500); }}
+              onTouchEnd={() => { if (longPressTimer.current) clearTimeout(longPressTimer.current); }}
               className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-all active:scale-[0.98] animate-fade-in"
               style={{ animationDelay: `${i * 0.04}s` }}>
               <div className="relative flex-shrink-0">
@@ -1693,9 +1711,10 @@ function ChatsTab({ token, currentUserId, onMessageRead }: { token: string; curr
               <div className="flex-1 min-w-0 text-left">
                 <div className="flex items-center justify-between">
                   <span className="font-golos font-semibold text-foreground text-sm truncate">{chat.name}</span>
-                  <span className={`text-[11px] flex-shrink-0 ml-2 ${chat.unread > 0 ? "text-sky-400" : "text-muted-foreground"}`}>
-                    {relTime}
-                  </span>
+                  <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                    {chat.pinned && <Icon name="Pin" size={11} className="text-sky-400" />}
+                    <span className={`text-[11px] ${chat.unread > 0 ? "text-sky-400" : "text-muted-foreground"}`}>{relTime}</span>
+                  </div>
                 </div>
                 <div className="flex items-center justify-between mt-0.5">
                   <span className="text-xs text-muted-foreground truncate">{chat.last_msg || "Нет сообщений"}</span>
@@ -1710,6 +1729,30 @@ function ChatsTab({ token, currentUserId, onMessageRead }: { token: string; curr
           );
         })}
       </div>
+
+      {/* Context menu for long press */}
+      {contextChat && (
+        <div className="absolute inset-0 z-50 flex items-end justify-center pb-8 bg-black/40 backdrop-blur-sm animate-fade-in"
+          onClick={() => setContextChat(null)}>
+          <div className="w-full max-w-sm mx-4 glass rounded-3xl border border-white/10 overflow-hidden animate-slide-up"
+            onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-white/5">
+              <AvatarEl name={contextChat.name} size="sm" />
+              <span className="font-golos font-semibold text-foreground text-sm truncate">{contextChat.name}</span>
+            </div>
+            <button onClick={() => togglePin(contextChat)}
+              className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-white/5 transition-colors">
+              <Icon name={contextChat.pinned ? "PinOff" : "Pin"} size={18} className="text-sky-400" />
+              <span className="text-sm text-foreground">{contextChat.pinned ? "Открепить" : "Закрепить"}</span>
+            </button>
+            <button onClick={() => setContextChat(null)}
+              className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-white/5 transition-colors border-t border-white/5">
+              <Icon name="X" size={18} className="text-muted-foreground" />
+              <span className="text-sm text-muted-foreground">Отмена</span>
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
