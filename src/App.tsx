@@ -277,8 +277,8 @@ function BottomNav({ active, onChange, unreadCount }: {
 
 // ─── Chat Screen ──────────────────────────────────────────────────────────────
 
-function ChatScreen({ chat, token, currentUserId, onBack, allChats }: {
-  chat: Chat; token: string; currentUserId: number; onBack: () => void; allChats: Chat[];
+function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRead }: {
+  chat: Chat; token: string; currentUserId: number; onBack: () => void; allChats: Chat[]; onMessageRead?: () => void;
 }) {
   const [text, setText] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -517,6 +517,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats }: {
         body: JSON.stringify({ message_id: msgId }),
       });
       setMessages(prev => prev.map(m => m.id === msgId ? { ...m, is_read: true } : m));
+      onMessageRead?.();
     };
 
     const observer = new IntersectionObserver(entries => {
@@ -1152,6 +1153,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats }: {
                               body: JSON.stringify({ message_id: msg.id }),
                             }).then(() => {
                               setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, is_read: true } : m));
+                              onMessageRead?.();
                             });
                           }
                         }} />
@@ -1456,7 +1458,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats }: {
 
 // ─── Chats Tab ────────────────────────────────────────────────────────────────
 
-function ChatsTab({ token, currentUserId }: { token: string; currentUserId: number }) {
+function ChatsTab({ token, currentUserId, onMessageRead }: { token: string; currentUserId: number; onMessageRead: (chatId: number) => void }) {
   const [chats, setChats] = useState<Chat[]>([]);
   const [activeChat, setActiveChat] = useState<Chat | null>(null);
   const [search, setSearch] = useState("");
@@ -1536,7 +1538,8 @@ function ChatsTab({ token, currentUserId }: { token: string; currentUserId: numb
 
   if (activeChat) {
     return <ChatScreen chat={activeChat} token={token} currentUserId={currentUserId}
-      onBack={() => { setActiveChat(null); loadChats(); }} allChats={chats} />;
+      onBack={() => { setActiveChat(null); loadChats(); }} allChats={chats}
+      onMessageRead={() => onMessageRead(activeChat.id)} />;
   }
 
   return (
@@ -2726,7 +2729,11 @@ export default function App() {
   }
 
   const tabs: Record<Tab, React.ReactNode> = {
-    chats: <ChatsTab token={token} currentUserId={user.id} />,
+    chats: <ChatsTab token={token} currentUserId={user.id} onMessageRead={(chatId: number) => {
+      setChatsForBadge(prev => prev.map(c =>
+        c.id === chatId ? { ...c, unread: Math.max(0, c.unread - 1) } : c
+      ));
+    }} />,
     contacts: <ContactsTab token={token} />,
     calls: <CallsTab />,
     status: <StatusTab user={user} />,
