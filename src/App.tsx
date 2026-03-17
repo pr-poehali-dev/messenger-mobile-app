@@ -1534,7 +1534,15 @@ function ChatsTab({ token, currentUserId, onMessageRead }: { token: string; curr
     );
   }
 
-  const filtered = chats.filter(c => c.name.toLowerCase().includes(search.toLowerCase()));
+  const filtered = chats
+    .filter(c => c.name.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => {
+      if (a.pinned && !b.pinned) return -1;
+      if (!a.pinned && b.pinned) return 1;
+      const ta = a.last_time ? new Date(a.last_time).getTime() : 0;
+      const tb = b.last_time ? new Date(b.last_time).getTime() : 0;
+      return tb - ta;
+    });
 
   if (activeChat) {
     return <ChatScreen chat={activeChat} token={token} currentUserId={currentUserId}
