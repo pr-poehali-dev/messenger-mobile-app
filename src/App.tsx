@@ -1107,13 +1107,23 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats }: {
                 )}
                 {msg.file_url && msg.file_type?.startsWith("audio/") && (
                   <div className="flex items-center gap-2.5 mb-1.5 px-3 py-2.5 rounded-xl bg-black/20 border border-white/10 max-w-[260px] min-w-[200px]">
-                    <div className="w-8 h-8 rounded-full bg-sky-500/20 flex items-center justify-center flex-shrink-0">
-                      <Icon name="Mic" size={14} className="text-sky-400" />
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-colors ${msg.is_read || msg.out ? "bg-sky-500/20" : "bg-amber-500/20"}`}>
+                      <Icon name="Mic" size={14} className={msg.is_read || msg.out ? "text-sky-400" : "text-amber-400"} />
                     </div>
                     <div className="flex-1 min-w-0">
                       <audio src={msg.file_url} controls preload="metadata"
                         className="w-full h-8 rounded-lg"
-                        style={{ filter: "invert(0.8) sepia(1) saturate(2) hue-rotate(185deg)" }} />
+                        style={{ filter: "invert(0.8) sepia(1) saturate(2) hue-rotate(185deg)" }}
+                        onPlay={() => {
+                          if (!msg.out && !msg.is_read && typeof msg.id === "number") {
+                            fetch(`${CHATS_URL}/read`, {
+                              method: "POST", headers: apiHeaders(token),
+                              body: JSON.stringify({ message_id: msg.id }),
+                            }).then(() => {
+                              setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, is_read: true } : m));
+                            });
+                          }
+                        }} />
                     </div>
                     {msg.file_size && (
                       <span className="text-[10px] text-white/40 flex-shrink-0">{(msg.file_size / 1024).toFixed(0)}кб</span>

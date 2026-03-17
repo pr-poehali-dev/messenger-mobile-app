@@ -356,6 +356,22 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "id": row[0]})}
 
+        # POST /read — пометить сообщение как прочитанное
+        if method == "POST" and path.endswith("/read"):
+            body = json.loads(event.get("body") or "{}")
+            message_id = body.get("message_id")
+            if not message_id:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "message_id обязателен"})}
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    UPDATE {SCHEMA}.messages SET is_read = TRUE
+                    WHERE id = %s AND sender_id != %s AND is_read = FALSE
+                    RETURNING id
+                """, (message_id, user_id))
+                row = cur.fetchone()
+            conn.commit()
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "updated": row is not None})}
+
         # POST /react — поставить или снять реакцию
         if method == "POST" and "react" in path:
             body = json.loads(event.get("body") or "{}")
