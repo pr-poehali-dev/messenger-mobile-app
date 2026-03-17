@@ -6,6 +6,11 @@ import mimetypes
 import uuid
 import boto3
 import psycopg2
+try:
+    from pywebpush import webpush, WebPushException
+    WEBPUSH_AVAILABLE = True
+except ImportError:
+    WEBPUSH_AVAILABLE = False
 
 SCHEMA = "t_p22534578_messenger_mobile_app"
 
@@ -281,6 +286,33 @@ def handler(event: dict, context) -> dict:
                 )
                 msg_id, created_at = cur.fetchone()
             conn.commit()
+
+            # Send push notifications to other chat members
+            if WEBPUSH_AVAILABLE:
+                vapid_private = os.environ.get("VAPID_PRIVATE_KEY")
+                vapid_public = os.environ.get("VAPID_PUBLIC_KEY")
+                if vapid_private and vapid_public:
+                    with conn.cursor() as cur:
+                        cur.execute(f"""
+                            SELECT ps.endpoint, ps.p256dh, ps.auth
+                            FROM {SCHEMA}.push_subscriptions ps
+                            JOIN {SCHEMA}.chat_members cm ON cm.user_id = ps.user_id
+                            WHERE cm.chat_id = %s AND ps.user_id != %s
+                        """, (chat_id, user_id))
+                        subs = cur.fetchall()
+                    preview = (text or ("📎 Файл" if file_url else ""))[:80]
+                    push_data = json.dumps({"title": user["name"], "body": preview, "tag": f"chat-{chat_id}"})
+                    for endpoint, p256dh, auth_k in subs:
+                        try:
+                            webpush(
+                                subscription_info={"endpoint": endpoint, "keys": {"p256dh": p256dh, "auth": auth_k}},
+                                data=push_data,
+                                vapid_private_key=vapid_private,
+                                vapid_claims={"sub": "mailto:push@poehali.dev"},
+                            )
+                        except WebPushException:
+                            pass
+
             return {
                 "statusCode": 200, "headers": cors,
                 "body": json.dumps({
@@ -637,6 +669,27 @@ def handler(event: dict, context) -> dict:
                 rows = cur.fetchall()
             users = [{"id": r[0], "name": r[1], "phone": r[2], "status": r[3]} for r in rows]
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"users": users})}
+
+        # GET /vapid-public-key — отдать публичный VAPID ключ фронтенду
+        if method == "GET" and "vapid-public-key" in path:
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"public_key": os.environ.get("VAPID_PUBLIC_KEY", "")})}
+
+        # POST /subscribe — сохранить push-подписку устройства
+        if method == "POST" and "subscribe" in path:
+            body = json.loads(event.get("body") or "{}")
+            endpoint = body.get("endpoint")
+            p256dh = (body.get("keys") or {}).get("p256dh")
+            auth_key = (body.get("keys") or {}).get("auth")
+            if not endpoint or not p256dh or not auth_key:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "endpoint и keys обязательны"})}
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    INSERT INTO {SCHEMA}.push_subscriptions (user_id, endpoint, p256dh, auth)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (user_id, endpoint) DO UPDATE SET p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth
+                """, (user_id, endpoint, p256dh, auth_key))
+            conn.commit()
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
 
         return {"statusCode": 404, "headers": cors, "body": json.dumps({"error": "Not found"})}
     finally:

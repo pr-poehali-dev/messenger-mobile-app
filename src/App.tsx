@@ -2595,12 +2595,41 @@ export default function App() {
       .finally(() => setAuthChecked(true));
   }, []);
 
-  // Request notification permission on mount
+  // Register Service Worker and subscribe to push notifications
   useEffect(() => {
-    if ("Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission();
+    if (!token || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
+
+    async function setupPush() {
+      try {
+        const perm = Notification.permission === "default"
+          ? await Notification.requestPermission()
+          : Notification.permission;
+        if (perm !== "granted") return;
+
+        const reg = await navigator.serviceWorker.register("/sw.js");
+        await navigator.serviceWorker.ready;
+
+        // Get VAPID public key from backend
+        const keyRes = await fetch(`${CHATS_URL}/vapid-public-key`, { headers: apiHeaders(token) });
+        const keyData = await keyRes.json();
+        if (!keyData.public_key) return;
+
+        const existing = await reg.pushManager.getSubscription();
+        const sub = existing ?? await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: keyData.public_key,
+        });
+
+        await fetch(`${CHATS_URL}/subscribe`, {
+          method: "POST",
+          headers: apiHeaders(token),
+          body: JSON.stringify(sub.toJSON()),
+        });
+      } catch { /* push not supported or blocked */ }
     }
-  }, []);
+
+    setupPush();
+  }, [token]);
 
   const playSound = useCallback(() => {
     try {
