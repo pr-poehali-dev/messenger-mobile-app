@@ -316,6 +316,13 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats }: {
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isTypingSent = useRef(false);
 
+  // Voice recording
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const isAtBottom = useRef(true);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -714,6 +721,82 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats }: {
     } catch { /* keep optimistic */ }
   }
 
+  async function startRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mr = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm" });
+      audioChunksRef.current = [];
+      mr.ondataavailable = e => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+      mr.start(100);
+      mediaRecorderRef.current = mr;
+      setIsRecording(true);
+      setRecordingTime(0);
+      recordingTimerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000);
+    } catch { /* микрофон недоступен */ }
+  }
+
+  function cancelRecording() {
+    if (mediaRecorderRef.current) {
+      mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop());
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current = null;
+    }
+    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+    audioChunksRef.current = [];
+    setIsRecording(false);
+    setRecordingTime(0);
+  }
+
+  async function stopAndSendRecording() {
+    const mr = mediaRecorderRef.current;
+    if (!mr) return;
+    setIsRecording(false);
+    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+
+    await new Promise<void>(resolve => {
+      mr.onstop = () => resolve();
+      mr.stop();
+    });
+    mr.stream.getTracks().forEach(t => t.stop());
+    mediaRecorderRef.current = null;
+
+    const blob = new Blob(audioChunksRef.current, { type: mr.mimeType || "audio/webm" });
+    audioChunksRef.current = [];
+    setRecordingTime(0);
+    if (blob.size < 1000) return;
+
+    setUploading(true);
+    try {
+      const reader = new FileReader();
+      reader.readAsDataURL(blob);
+      const dataUrl = await new Promise<string>(res => { reader.onload = () => res(reader.result as string); });
+      const base64 = dataUrl.split(",")[1];
+      const ext = mr.mimeType?.includes("ogg") ? "ogg" : "webm";
+      const res = await fetch(`${CHATS_URL}/upload`, {
+        method: "POST", headers: apiHeaders(token),
+        body: JSON.stringify({ file_data: base64, file_name: `voice_${Date.now()}.${ext}`, file_type: `audio/${ext}` }),
+      });
+      const data = await res.json();
+      if (data.url) {
+        const optimistic: Message = {
+          id: `opt-${Date.now()}`, text: "",
+          time: new Date().toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" }),
+          out: true, is_read: false,
+          file_url: data.url, file_name: `Голосовое`, file_size: blob.size, file_type: `audio/${ext}`,
+        };
+        setMessages(prev => [...prev, optimistic]);
+        const sendRes = await fetch(`${CHATS_URL}/send`, {
+          method: "POST", headers: apiHeaders(token),
+          body: JSON.stringify({ chat_id: chat.id, text: "", file_url: data.url, file_name: "Голосовое", file_size: blob.size, file_type: `audio/${ext}` }),
+        });
+        const sendData = await sendRes.json();
+        if (sendData.message) {
+          setMessages(prev => prev.map(m => m.id === optimistic.id ? { ...sendData.message, out: true } : m));
+        }
+      }
+    } finally { setUploading(false); }
+  }
+
   if (leftGroup) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4 animate-fade-in">
@@ -1022,7 +1105,22 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats }: {
                       className="w-full object-cover max-h-48 hover:opacity-90 transition-opacity" />
                   </a>
                 )}
-                {msg.file_url && !msg.file_type?.startsWith("image/") && (
+                {msg.file_url && msg.file_type?.startsWith("audio/") && (
+                  <div className="flex items-center gap-2.5 mb-1.5 px-3 py-2.5 rounded-xl bg-black/20 border border-white/10 max-w-[260px] min-w-[200px]">
+                    <div className="w-8 h-8 rounded-full bg-sky-500/20 flex items-center justify-center flex-shrink-0">
+                      <Icon name="Mic" size={14} className="text-sky-400" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <audio src={msg.file_url} controls preload="metadata"
+                        className="w-full h-8 rounded-lg"
+                        style={{ filter: "invert(0.8) sepia(1) saturate(2) hue-rotate(185deg)" }} />
+                    </div>
+                    {msg.file_size && (
+                      <span className="text-[10px] text-white/40 flex-shrink-0">{(msg.file_size / 1024).toFixed(0)}кб</span>
+                    )}
+                  </div>
+                )}
+                {msg.file_url && !msg.file_type?.startsWith("image/") && !msg.file_type?.startsWith("audio/") && (
                   <a href={msg.file_url} target="_blank" rel="noopener noreferrer" download={msg.file_name || true}
                     className="flex items-center gap-2.5 mb-1.5 px-3 py-2.5 rounded-xl bg-black/20 hover:bg-black/30 transition-colors border border-white/10 max-w-[240px]">
                     <div className="w-8 h-8 rounded-lg bg-sky-500/20 flex items-center justify-center flex-shrink-0">
@@ -1205,26 +1303,55 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats }: {
           </div>
         )}
 
+        {/* Recording indicator */}
+        {isRecording && (
+          <div className="flex items-center gap-3 px-4 py-2 mb-2 rounded-2xl bg-red-500/10 border border-red-500/20">
+            <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
+            <span className="text-sm text-red-400 font-medium flex-1">Запись...
+              {" "}{String(Math.floor(recordingTime / 60)).padStart(2, "0")}:{String(recordingTime % 60).padStart(2, "0")}
+            </span>
+            <button onClick={cancelRecording} className="p-1 hover:bg-red-500/20 rounded-full transition-colors">
+              <Icon name="X" size={15} className="text-red-400" />
+            </button>
+          </div>
+        )}
+
         <div className="flex items-end gap-2">
           <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileSelect}
             accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.zip,.txt,.mp4,.mp3" />
-          <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
-            className={`p-2 rounded-full transition-all flex-shrink-0 ${uploading ? "opacity-50" : "hover:bg-white/10"}`}>
-            {uploading
-              ? <div className="w-5 h-5 border-2 border-blue-400/30 border-t-blue-400 rounded-full animate-spin" />
-              : <Icon name="Paperclip" size={20} className="text-muted-foreground" />}
-          </button>
-          <textarea value={text} onChange={e => { setText(e.target.value); sendTyping(); }}
-            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-            placeholder="Сообщение..." rows={1}
-            className="flex-1 bg-secondary/60 border border-white/10 rounded-2xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:border-sky-500/50 transition-all"
-            style={{ maxHeight: "100px" }} />
-          <button onClick={send} disabled={!text.trim() && !pendingFile}
-            className={`p-3 rounded-full transition-all flex-shrink-0 ${(text.trim() || pendingFile)
-              ? "bg-gradient-to-br from-blue-600 to-blue-700 hover:scale-105 shadow-[0_0_20px_rgba(0,180,230,0.5)]"
-              : "bg-secondary opacity-50"}`}>
-            <Icon name="Send" size={16} className="text-white" />
-          </button>
+          {!isRecording && (
+            <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
+              className={`p-2 rounded-full transition-all flex-shrink-0 ${uploading ? "opacity-50" : "hover:bg-white/10"}`}>
+              {uploading
+                ? <div className="w-5 h-5 border-2 border-blue-400/30 border-t-blue-400 rounded-full animate-spin" />
+                : <Icon name="Paperclip" size={20} className="text-muted-foreground" />}
+            </button>
+          )}
+          {isRecording
+            ? <div className="flex-1 flex items-center justify-center py-2.5 text-sm text-muted-foreground">
+                Проведи влево, чтобы отменить
+              </div>
+            : <textarea value={text} onChange={e => { setText(e.target.value); sendTyping(); }}
+                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+                placeholder="Сообщение..." rows={1}
+                className="flex-1 bg-secondary/60 border border-white/10 rounded-2xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:border-sky-500/50 transition-all"
+                style={{ maxHeight: "100px" }} />
+          }
+          {(text.trim() || pendingFile)
+            ? <button onClick={send}
+                className="p-3 rounded-full transition-all flex-shrink-0 bg-gradient-to-br from-blue-600 to-blue-700 hover:scale-105 shadow-[0_0_20px_rgba(0,180,230,0.5)]">
+                <Icon name="Send" size={16} className="text-white" />
+              </button>
+            : isRecording
+              ? <button onClick={stopAndSendRecording}
+                  className="p-3 rounded-full transition-all flex-shrink-0 bg-gradient-to-br from-red-500 to-red-600 hover:scale-105 shadow-[0_0_20px_rgba(239,68,68,0.5)]">
+                  <Icon name="Send" size={16} className="text-white" />
+                </button>
+              : <button onMouseDown={startRecording} onTouchStart={startRecording}
+                  className="p-3 rounded-full transition-all flex-shrink-0 bg-secondary hover:bg-white/10">
+                  <Icon name="Mic" size={16} className="text-muted-foreground" />
+                </button>
+          }
         </div>
       </div>
 
