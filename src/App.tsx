@@ -1675,7 +1675,7 @@ function ChatsTab({ token, currentUserId, onMessageRead }: { token: string; curr
               className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-all active:scale-[0.98] animate-fade-in"
               style={{ animationDelay: `${i * 0.04}s` }}>
               <div className="relative flex-shrink-0">
-                <AvatarEl name={chat.name} size="md" status={!chat.is_group ? "online" : undefined} />
+                <AvatarEl name={chat.name} size="md" status={!chat.is_group ? (chat.peer_online ? "online" : "offline") : undefined} />
                 {chat.is_group && (
                   <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center">
                     <Icon name="Users" size={10} className="text-white" />
