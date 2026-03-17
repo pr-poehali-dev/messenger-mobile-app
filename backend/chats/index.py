@@ -670,6 +670,26 @@ def handler(event: dict, context) -> dict:
             users = [{"id": r[0], "name": r[1], "phone": r[2], "status": r[3]} for r in rows]
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"users": users})}
 
+        # GET /generate-vapid-keys — одноразовая генерация VAPID ключей (временный эндпоинт)
+        if method == "GET" and "generate-vapid-keys" in path:
+            from cryptography.hazmat.primitives.asymmetric import ec
+            from cryptography.hazmat.backends import default_backend
+            import base64
+            key = ec.generate_private_key(ec.SECP256R1(), default_backend())
+            priv_bytes = key.private_numbers().private_value.to_bytes(32, "big")
+            pub_key = key.public_key()
+            pub_numbers = pub_key.public_numbers()
+            pub_bytes = (b"\x04"
+                + pub_numbers.x.to_bytes(32, "big")
+                + pub_numbers.y.to_bytes(32, "big"))
+            private_key = base64.urlsafe_b64encode(priv_bytes).rstrip(b"=").decode()
+            public_key = base64.urlsafe_b64encode(pub_bytes).rstrip(b"=").decode()
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({
+                "VAPID_PUBLIC_KEY": public_key,
+                "VAPID_PRIVATE_KEY": private_key,
+                "note": "Скопируй оба значения в секреты проекта, затем удали этот эндпоинт"
+            })}
+
         # GET /vapid-public-key — отдать публичный VAPID ключ фронтенду
         if method == "GET" and "vapid-public-key" in path:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"public_key": os.environ.get("VAPID_PUBLIC_KEY", "")})}
