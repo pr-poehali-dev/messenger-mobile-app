@@ -1546,6 +1546,23 @@ function ChatsTab({ token, currentUserId, onMessageRead }: { token: string; curr
     setContextChat(null);
   }
 
+  async function deleteChat(chat: Chat) {
+    setContextChat(null);
+    if (chat.is_group) {
+      setChats(prev => prev.filter(c => c.id !== chat.id));
+      await fetch(`${CHATS_URL}/leave`, {
+        method: "POST", headers: apiHeaders(token),
+        body: JSON.stringify({ chat_id: chat.id }),
+      });
+    } else {
+      setChats(prev => prev.filter(c => c.id !== chat.id));
+      await fetch(`${CHATS_URL}/hide-chat`, {
+        method: "POST", headers: apiHeaders(token),
+        body: JSON.stringify({ chat_id: chat.id }),
+      });
+    }
+  }
+
   const filtered = chats
     .filter(c => c.name.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => {
@@ -1740,10 +1757,15 @@ function ChatsTab({ token, currentUserId, onMessageRead }: { token: string; curr
               <AvatarEl name={contextChat.name} size="sm" />
               <span className="font-golos font-semibold text-foreground text-sm truncate">{contextChat.name}</span>
             </div>
-            <button onClick={() => togglePin(contextChat)}
+                  <button onClick={() => togglePin(contextChat)}
               className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-white/5 transition-colors">
               <Icon name={contextChat.pinned ? "PinOff" : "Pin"} size={18} className="text-sky-400" />
               <span className="text-sm text-foreground">{contextChat.pinned ? "Открепить" : "Закрепить"}</span>
+            </button>
+            <button onClick={() => deleteChat(contextChat)}
+              className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-red-500/10 transition-colors border-t border-white/5">
+              <Icon name={contextChat.is_group ? "LogOut" : "Trash2"} size={18} className="text-red-400" />
+              <span className="text-sm text-red-400">{contextChat.is_group ? "Покинуть группу" : "Удалить чат"}</span>
             </button>
             <button onClick={() => setContextChat(null)}
               className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-white/5 transition-colors border-t border-white/5">

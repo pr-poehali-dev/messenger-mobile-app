@@ -1,0 +1,1 @@
+ALTER TABLE t_p22534578_messenger_mobile_app.chat_members ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT FALSE;
