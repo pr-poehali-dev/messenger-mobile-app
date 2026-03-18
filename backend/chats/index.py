@@ -776,6 +776,22 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
 
+        # POST /delete-account — полное удаление аккаунта пользователя
+        if method == "POST" and "delete-account" in path:
+            with conn.cursor() as cur:
+                # Анонимизируем сообщения (текст сохраняем, имя сбрасываем)
+                cur.execute(f"UPDATE {SCHEMA}.users SET name = 'Удалённый пользователь', phone = NULL, bio = NULL, status = 'offline' WHERE id = %s", (user_id,))
+                # Удаляем сессии
+                cur.execute(f"DELETE FROM {SCHEMA}.sessions WHERE user_id = %s", (user_id,))
+                # Удаляем из чатов
+                cur.execute(f"DELETE FROM {SCHEMA}.chat_members WHERE user_id = %s", (user_id,))
+                # Удаляем push подписки
+                cur.execute(f"DELETE FROM {SCHEMA}.push_subscriptions WHERE user_id = %s", (user_id,))
+                # Удаляем реакции
+                cur.execute(f"DELETE FROM {SCHEMA}.message_reactions WHERE user_id = %s", (user_id,))
+            conn.commit()
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
+
         return {"statusCode": 404, "headers": cors, "body": json.dumps({"error": "Not found"})}
     finally:
         conn.close()

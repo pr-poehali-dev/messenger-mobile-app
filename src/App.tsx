@@ -327,6 +327,8 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [isInContext, setIsInContext] = useState(false);
+  const isInContextRef = useRef(false);
+  const [newMsgCount, setNewMsgCount] = useState(0);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [peerStatus, setPeerStatus] = useState<{ online: boolean; last_seen: string | null }>({
     online: !!chat.peer_online,
@@ -385,6 +387,11 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
             osc.stop(ctx.currentTime + 0.18);
           } catch { /* браузер может заблокировать без жеста */ }
         }
+        if (silent && newIncoming.length > 0) {
+          setNewMsgCount(n => n + newIncoming.length);
+        }
+        // Когда просматриваем старый контекст — не перезаписываем список новыми сообщениями
+        if (silent && isInContextRef.current) return prev;
         if (!silent || newIncoming.length > 0 || data.messages.some((m: Message) => !prevIds.has(String(m.id)))) {
           if (!silent || data.messages.some((m: Message) => !prevIds.has(String(m.id)))) return data.messages;
         }
@@ -452,6 +459,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
             setMessages(data.messages);
             if (data.has_more !== undefined) setHasMore(data.has_more);
             setIsInContext(true);
+            isInContextRef.current = true;
           }
         });
     }
@@ -459,6 +467,8 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
 
   function jumpToLatest() {
     setIsInContext(false);
+    isInContextRef.current = false;
+    setNewMsgCount(0);
     loadMessages().then(() => {
       setTimeout(() => endRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
     });
@@ -1324,6 +1334,11 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
             className="flex items-center gap-2 px-4 py-2 rounded-full bg-sky-500/20 border border-sky-500/40 text-sky-300 text-sm hover:bg-sky-500/30 transition-all shadow-lg">
             <Icon name="ChevronsDown" size={15} />
             К последним сообщениям
+            {newMsgCount > 0 && (
+              <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-sky-500 text-white text-[10px] font-bold flex items-center justify-center">
+                {newMsgCount > 99 ? "99+" : newMsgCount}
+              </span>
+            )}
           </button>
         </div>
       )}
@@ -1904,12 +1919,14 @@ function ChatsTab({ token, currentUserId, onMessageRead }: { token: string; curr
 
 // ─── Profile Tab ──────────────────────────────────────────────────────────────
 
-function ProfileTab({ user, token, onLogout, onUserUpdate }: {
-  user: User; token: string; onLogout: () => void; onUserUpdate: (u: User) => void;
+function ProfileTab({ user, token, onLogout, onUserUpdate, onDeleteAccount }: {
+  user: User; token: string; onLogout: () => void; onUserUpdate: (u: User) => void; onDeleteAccount: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(user.name);
   const [bio, setBio] = useState(user.bio ?? "");
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
@@ -2229,6 +2246,35 @@ function ProfileTab({ user, token, onLogout, onUserUpdate }: {
           </div>
           <span className="text-sm font-medium text-red-400">Выйти из аккаунта</span>
         </button>
+
+        {!confirmDelete ? (
+          <button onClick={() => setConfirmDelete(true)}
+            className="w-full glass rounded-2xl p-4 flex items-center gap-3 hover:bg-red-500/5 transition-all">
+            <div className="w-10 h-10 rounded-xl bg-red-900/20 border border-red-700/30 flex items-center justify-center flex-shrink-0">
+              <Icon name="Trash2" size={16} className="text-red-500" />
+            </div>
+            <span className="text-sm font-medium text-red-500">Удалить профиль</span>
+          </button>
+        ) : (
+          <div className="glass rounded-2xl p-4 border border-red-500/30 animate-fade-in">
+            <p className="text-sm text-foreground font-semibold mb-1">Удалить профиль?</p>
+            <p className="text-xs text-muted-foreground mb-4">Это действие необратимо. Все ваши данные будут удалены.</p>
+            <div className="flex gap-2">
+              <button onClick={() => setConfirmDelete(false)} disabled={deleting}
+                className="flex-1 py-2 rounded-xl bg-white/5 border border-white/10 text-sm text-muted-foreground hover:bg-white/10 transition-all">
+                Отмена
+              </button>
+              <button disabled={deleting} onClick={async () => {
+                setDeleting(true);
+                await fetch(`${CHATS_URL}/delete-account`, { method: "POST", headers: apiHeaders(token) });
+                onDeleteAccount();
+              }}
+                className="flex-1 py-2 rounded-xl bg-red-600 text-sm text-white font-semibold hover:bg-red-700 transition-all disabled:opacity-50">
+                {deleting ? "Удаляем..." : "Удалить"}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -2962,7 +3008,7 @@ export default function App() {
     contacts: <ContactsTab token={token} />,
     calls: <CallsTab />,
     status: <StatusTab user={user} />,
-    profile: <ProfileTab user={user} token={token} onLogout={handleLogout} onUserUpdate={u => { setUser(u); localStorage.setItem("pulse_user", JSON.stringify(u)); }} />,
+    profile: <ProfileTab user={user} token={token} onLogout={handleLogout} onUserUpdate={u => { setUser(u); localStorage.setItem("pulse_user", JSON.stringify(u)); }} onDeleteAccount={handleLogout} />,
     settings: <SettingsTab onLogout={handleLogout} onTestSound={playSound} />,
   };
 
