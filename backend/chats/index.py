@@ -135,6 +135,46 @@ def handler(event: dict, context) -> dict:
                     })
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"chats": chats})}
 
+        # GET /global-search?q=текст — поиск по всем сообщениям пользователя
+        if method == "GET" and "global-search" in path:
+            params = event.get("queryStringParameters") or {}
+            q = (params.get("q") or "").strip()
+            if not q or len(q) < 2:
+                return {"statusCode": 200, "headers": cors, "body": json.dumps({"results": []})}
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT m.id, m.text, m.created_at, m.chat_id,
+                           CASE WHEN c.is_group THEN c.name
+                                ELSE (SELECT u2.name FROM {SCHEMA}.chat_members cm2
+                                      JOIN {SCHEMA}.users u2 ON u2.id = cm2.user_id
+                                      WHERE cm2.chat_id = c.id AND cm2.user_id != %s LIMIT 1)
+                           END AS chat_name,
+                           c.is_group,
+                           sender.name AS sender_name,
+                           (m.sender_id = %s) AS is_out
+                    FROM {SCHEMA}.messages m
+                    JOIN {SCHEMA}.chats c ON c.id = m.chat_id
+                    JOIN {SCHEMA}.chat_members cm ON cm.chat_id = m.chat_id AND cm.user_id = %s AND cm.hidden = FALSE
+                    JOIN {SCHEMA}.users sender ON sender.id = m.sender_id
+                    WHERE m.is_deleted = FALSE AND m.text ILIKE %s
+                    ORDER BY m.created_at DESC
+                    LIMIT 50
+                """, (user_id, user_id, user_id, f"%{q}%"))
+                rows = cur.fetchall()
+            results = []
+            for r in rows:
+                results.append({
+                    "msg_id": r[0],
+                    "text": r[1],
+                    "time": r[2].isoformat() if r[2] else None,
+                    "chat_id": r[3],
+                    "chat_name": r[4] or "Чат",
+                    "is_group": r[5],
+                    "sender_name": r[6],
+                    "is_out": bool(r[7]),
+                })
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"results": results})}
+
         # GET /messages?chat_id=X
         if method == "GET" and "messages" in path:
             params = event.get("queryStringParameters") or {}

@@ -1472,6 +1472,9 @@ function ChatsTab({ token, currentUserId, onMessageRead }: { token: string; curr
   const [groupCreating, setGroupCreating] = useState(false);
   const [contextChat, setContextChat] = useState<Chat | null>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [globalResults, setGlobalResults] = useState<{ msg_id: number; text: string; time: string | null; chat_id: number; chat_name: string; is_group: boolean; sender_name: string; is_out: boolean }[]>([]);
+  const [globalSearching, setGlobalSearching] = useState(false);
+  const globalSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadChats = useCallback(async () => {
     try {
@@ -1572,6 +1575,25 @@ function ChatsTab({ token, currentUserId, onMessageRead }: { token: string; curr
       const tb = b.last_time ? new Date(b.last_time).getTime() : 0;
       return tb - ta;
     });
+
+  function handleSearchChange(val: string) {
+    setSearch(val);
+    setGlobalResults([]);
+    if (globalSearchTimer.current) clearTimeout(globalSearchTimer.current);
+    if (val.trim().length < 2) { setGlobalSearching(false); return; }
+    setGlobalSearching(true);
+    globalSearchTimer.current = setTimeout(async () => {
+      const res = await fetch(`${CHATS_URL}/global-search?q=${encodeURIComponent(val.trim())}`, { headers: apiHeaders(token) });
+      const data = await res.json();
+      setGlobalResults(data.results || []);
+      setGlobalSearching(false);
+    }, 400);
+  }
+
+  function openChatFromSearch(chatId: number) {
+    const chat = chats.find(c => c.id === chatId);
+    if (chat) { setActiveChat(chat); setSearch(""); setGlobalResults([]); }
+  }
 
   if (activeChat) {
     return <ChatScreen chat={activeChat} token={token} currentUserId={currentUserId}
@@ -1680,8 +1702,14 @@ function ChatsTab({ token, currentUserId, onMessageRead }: { token: string; curr
 
         <div className="relative">
           <Icon name="Search" size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Поиск чатов..."
-            className="w-full bg-secondary/60 border border-white/10 rounded-2xl pl-9 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 transition-all" />
+          <input value={search} onChange={e => handleSearchChange(e.target.value)} placeholder="Поиск чатов и сообщений..."
+            className="w-full bg-secondary/60 border border-white/10 rounded-2xl pl-9 pr-9 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 transition-all" />
+          {search && (
+            <button onClick={() => { setSearch(""); setGlobalResults([]); setGlobalSearching(false); }}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
+              <Icon name="X" size={15} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -1692,7 +1720,50 @@ function ChatsTab({ token, currentUserId, onMessageRead }: { token: string; curr
             <p className="text-sm text-muted-foreground">Загружаем чаты...</p>
           </div>
         )}
-        {!loading && filtered.length === 0 && (
+        {/* Глобальный поиск по сообщениям */}
+        {search.trim().length >= 2 && (
+          <div className="pb-2">
+            <p className="px-4 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Сообщения</p>
+            {globalSearching && (
+              <div className="flex items-center gap-3 px-4 py-3">
+                <div className="w-4 h-4 border-2 border-sky-500/30 border-t-sky-500 rounded-full animate-spin" />
+                <span className="text-sm text-muted-foreground">Ищем...</span>
+              </div>
+            )}
+            {!globalSearching && globalResults.length === 0 && (
+              <p className="px-4 py-3 text-sm text-muted-foreground">Сообщений не найдено</p>
+            )}
+            {!globalSearching && globalResults.map(r => {
+              const hi = r.text;
+              const idx = hi.toLowerCase().indexOf(search.trim().toLowerCase());
+              const before = idx >= 0 ? hi.slice(0, idx) : hi;
+              const match = idx >= 0 ? hi.slice(idx, idx + search.trim().length) : "";
+              const after = idx >= 0 ? hi.slice(idx + search.trim().length) : "";
+              const t = r.time ? new Date(r.time).toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" }) : "";
+              return (
+                <button key={r.msg_id} onClick={() => openChatFromSearch(r.chat_id)}
+                  className="w-full flex items-start gap-3 px-4 py-3 hover:bg-white/5 transition-colors text-left border-b border-white/5">
+                  <div className="w-9 h-9 rounded-2xl bg-sky-500/15 border border-sky-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <Icon name={r.is_group ? "Users" : "MessageCircle"} size={15} className="text-sky-400" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2 mb-0.5">
+                      <span className="text-xs font-semibold text-sky-400 truncate">{r.chat_name}</span>
+                      <span className="text-xs text-muted-foreground flex-shrink-0">{t}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mb-0.5">{r.is_out ? "Вы" : r.sender_name}</p>
+                    <p className="text-sm text-foreground/80 line-clamp-2 break-words">
+                      {before}<span className="text-sky-300 font-semibold">{match}</span>{after}
+                    </p>
+                  </div>
+                </button>
+              );
+            })}
+            {filtered.length > 0 && <p className="px-4 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider border-t border-white/5 mt-1">Чаты</p>}
+          </div>
+        )}
+
+        {!loading && filtered.length === 0 && search.trim().length < 2 && (
           <div className="flex flex-col items-center justify-center h-full gap-4 px-8 text-center">
             <div className="w-16 h-16 rounded-3xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
               <Icon name="MessageCircle" size={28} className="text-blue-400" />
