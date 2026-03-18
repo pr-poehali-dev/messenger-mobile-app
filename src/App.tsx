@@ -428,8 +428,9 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
 
   useEffect(() => { loadMessages(); }, [loadMessages]);
 
-  // Скролл к initialMsgId после загрузки
+  // Скролл к initialMsgId после загрузки; если не найдено — подгружаем через around_id
   const initialScrollDone = useRef(false);
+  const aroundLoadDone = useRef(false);
   useEffect(() => {
     if (!initialMsgId || loading || initialScrollDone.current) return;
     const el = msgRefs.current[initialMsgId];
@@ -440,8 +441,19 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
         el.classList.add("msg-highlight");
         setTimeout(() => el.classList.remove("msg-highlight"), 2500);
       }, 150);
+    } else if (!aroundLoadDone.current) {
+      // Сообщение не в текущей порции — грузим контекст вокруг него
+      aroundLoadDone.current = true;
+      fetch(`${CHATS_URL}/messages?chat_id=${chat.id}&around_id=${initialMsgId}`, { headers: apiHeaders(token) })
+        .then(r => r.json())
+        .then(data => {
+          if (data.messages?.length) {
+            setMessages(data.messages);
+            if (data.has_more !== undefined) setHasMore(data.has_more);
+          }
+        });
     }
-  }, [initialMsgId, loading, messages]);
+  }, [initialMsgId, loading, messages, chat.id, token]);
 
   // Poll for new messages every 3s
   useEffect(() => {

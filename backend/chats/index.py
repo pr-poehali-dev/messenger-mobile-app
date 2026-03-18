@@ -189,37 +189,50 @@ def handler(event: dict, context) -> dict:
                     return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Нет доступа"})}
 
                 before_id = params.get("before_id")
-                if before_id:
-                    cur.execute(f"""
-                        SELECT m.id, m.sender_id, u.name, m.text, m.is_read, m.created_at,
+                around_id = params.get("around_id")
+                MSG_COLS = f"""m.id, m.sender_id, u.name, m.text, m.is_read, m.created_at,
                                m.file_url, m.file_name, m.file_size, m.file_type,
                                m.is_edited, m.hidden_at,
                                m.reply_to_id, m.reply_to_text, m.reply_to_name,
-                               m.is_pinned
+                               m.is_pinned"""
+                if around_id:
+                    # 20 до + само + 20 после = до 41 сообщения вокруг нужного
+                    cur.execute(f"""
+                        (SELECT {MSG_COLS}
+                         FROM {SCHEMA}.messages m JOIN {SCHEMA}.users u ON u.id = m.sender_id
+                         WHERE m.chat_id = %s AND m.id <= %s AND m.hidden_at IS NULL
+                         ORDER BY m.created_at DESC LIMIT 21)
+                        UNION ALL
+                        (SELECT {MSG_COLS}
+                         FROM {SCHEMA}.messages m JOIN {SCHEMA}.users u ON u.id = m.sender_id
+                         WHERE m.chat_id = %s AND m.id > %s AND m.hidden_at IS NULL
+                         ORDER BY m.created_at ASC LIMIT 20)
+                        ORDER BY created_at ASC
+                    """, (chat_id, around_id, chat_id, around_id))
+                    rows = cur.fetchall()
+                elif before_id:
+                    cur.execute(f"""
+                        SELECT {MSG_COLS}
                         FROM {SCHEMA}.messages m
                         JOIN {SCHEMA}.users u ON u.id = m.sender_id
-                        WHERE m.chat_id = %s AND m.id < %s
+                        WHERE m.chat_id = %s AND m.id < %s AND m.hidden_at IS NULL
                         ORDER BY m.created_at DESC
                         LIMIT 30
                     """, (chat_id, before_id))
                     rows = list(reversed(cur.fetchall()))
                 else:
                     cur.execute(f"""
-                        SELECT m.id, m.sender_id, u.name, m.text, m.is_read, m.created_at,
-                               m.file_url, m.file_name, m.file_size, m.file_type,
-                               m.is_edited, m.hidden_at,
-                               m.reply_to_id, m.reply_to_text, m.reply_to_name,
-                               m.is_pinned
+                        SELECT {MSG_COLS}
                         FROM {SCHEMA}.messages m
                         JOIN {SCHEMA}.users u ON u.id = m.sender_id
-                        WHERE m.chat_id = %s
+                        WHERE m.chat_id = %s AND m.hidden_at IS NULL
                         ORDER BY m.created_at DESC
                         LIMIT 40
                     """, (chat_id,))
                     rows = list(reversed(cur.fetchall()))
                 has_more = False
                 if rows:
-                    cur.execute(f"SELECT 1 FROM {SCHEMA}.messages WHERE chat_id = %s AND id < %s LIMIT 1", (chat_id, rows[0][0]))
+                    cur.execute(f"SELECT 1 FROM {SCHEMA}.messages WHERE chat_id = %s AND id < %s AND hidden_at IS NULL LIMIT 1", (chat_id, rows[0][0]))
                     has_more = cur.fetchone() is not None
 
                 # Load reactions for all messages
