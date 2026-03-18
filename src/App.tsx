@@ -326,6 +326,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
   const isAtBottom = useRef(true);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [isInContext, setIsInContext] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [peerStatus, setPeerStatus] = useState<{ online: boolean; last_seen: string | null }>({
     online: !!chat.peer_online,
@@ -450,10 +451,18 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
           if (data.messages?.length) {
             setMessages(data.messages);
             if (data.has_more !== undefined) setHasMore(data.has_more);
+            setIsInContext(true);
           }
         });
     }
   }, [initialMsgId, loading, messages, chat.id, token]);
+
+  function jumpToLatest() {
+    setIsInContext(false);
+    loadMessages().then(() => {
+      setTimeout(() => endRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+    });
+  }
 
   // Poll for new messages every 3s
   useEffect(() => {
@@ -1308,6 +1317,16 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
         )}
         <div ref={endRef} />
       </div>
+
+      {isInContext && (
+        <div className="flex-shrink-0 flex justify-center py-2 animate-fade-in">
+          <button onClick={jumpToLatest}
+            className="flex items-center gap-2 px-4 py-2 rounded-full bg-sky-500/20 border border-sky-500/40 text-sky-300 text-sm hover:bg-sky-500/30 transition-all shadow-lg">
+            <Icon name="ChevronsDown" size={15} />
+            К последним сообщениям
+          </button>
+        </div>
+      )}
 
       {typists.length > 0 && (
         <div className="flex-shrink-0 px-5 py-1.5 flex items-center gap-2 animate-fade-in">
