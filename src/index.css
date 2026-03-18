@@ -191,6 +191,10 @@
     color: hsl(222 30% 12%);
   }
 
+  .msg-highlight {
+    animation: msg-highlight-pulse 2.5s ease-out forwards;
+  }
+
   .nav-item-active {
     background: linear-gradient(
       135deg,
@@ -234,6 +238,24 @@
 
   .animate-pulse-dot {
     animation: pulseDot 2s ease-in-out infinite;
+  }
+}
+
+@keyframes msg-highlight-pulse {
+  0% {
+    outline: 2px solid rgba(250, 204, 21, 0.8);
+    outline-offset: 4px;
+    background-color: rgba(250, 204, 21, 0.12);
+  }
+  60% {
+    outline: 2px solid rgba(250, 204, 21, 0.4);
+    outline-offset: 4px;
+    background-color: rgba(250, 204, 21, 0.06);
+  }
+  100% {
+    outline: 2px solid transparent;
+    outline-offset: 4px;
+    background-color: transparent;
   }
 }
 

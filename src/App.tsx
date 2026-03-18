@@ -277,8 +277,8 @@ function BottomNav({ active, onChange, unreadCount }: {
 
 // ─── Chat Screen ──────────────────────────────────────────────────────────────
 
-function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRead }: {
-  chat: Chat; token: string; currentUserId: number; onBack: () => void; allChats: Chat[]; onMessageRead?: () => void;
+function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRead, initialMsgId }: {
+  chat: Chat; token: string; currentUserId: number; onBack: () => void; allChats: Chat[]; onMessageRead?: () => void; initialMsgId?: number;
 }) {
   const [text, setText] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -427,6 +427,21 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
   }, [chat.id, token, hasMore, loadingMore, messages]);
 
   useEffect(() => { loadMessages(); }, [loadMessages]);
+
+  // Скролл к initialMsgId после загрузки
+  const initialScrollDone = useRef(false);
+  useEffect(() => {
+    if (!initialMsgId || loading || initialScrollDone.current) return;
+    const el = msgRefs.current[initialMsgId];
+    if (el) {
+      initialScrollDone.current = true;
+      setTimeout(() => {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.classList.add("msg-highlight");
+        setTimeout(() => el.classList.remove("msg-highlight"), 2500);
+      }, 150);
+    }
+  }, [initialMsgId, loading, messages]);
 
   // Poll for new messages every 3s
   useEffect(() => {
@@ -1475,6 +1490,7 @@ function ChatsTab({ token, currentUserId, onMessageRead }: { token: string; curr
   const [globalResults, setGlobalResults] = useState<{ msg_id: number; text: string; time: string | null; chat_id: number; chat_name: string; is_group: boolean; sender_name: string; is_out: boolean }[]>([]);
   const [globalSearching, setGlobalSearching] = useState(false);
   const globalSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [initialMsgId, setInitialMsgId] = useState<number | undefined>(undefined);
 
   const loadChats = useCallback(async () => {
     try {
@@ -1590,15 +1606,20 @@ function ChatsTab({ token, currentUserId, onMessageRead }: { token: string; curr
     }, 400);
   }
 
-  function openChatFromSearch(chatId: number) {
+  function openChatFromSearch(chatId: number, msgId?: number) {
     const chat = chats.find(c => c.id === chatId);
-    if (chat) { setActiveChat(chat); setSearch(""); setGlobalResults([]); }
+    if (chat) {
+      setInitialMsgId(msgId);
+      setActiveChat(chat);
+      setSearch("");
+      setGlobalResults([]);
+    }
   }
 
   if (activeChat) {
     return <ChatScreen chat={activeChat} token={token} currentUserId={currentUserId}
-      onBack={() => { setActiveChat(null); loadChats(); }} allChats={chats}
-      onMessageRead={() => onMessageRead(activeChat.id)} />;
+      onBack={() => { setActiveChat(null); loadChats(); setInitialMsgId(undefined); }} allChats={chats}
+      onMessageRead={() => onMessageRead(activeChat.id)} initialMsgId={initialMsgId} />;
   }
 
   return (
@@ -1741,7 +1762,7 @@ function ChatsTab({ token, currentUserId, onMessageRead }: { token: string; curr
               const after = idx >= 0 ? hi.slice(idx + search.trim().length) : "";
               const t = r.time ? new Date(r.time).toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" }) : "";
               return (
-                <button key={r.msg_id} onClick={() => openChatFromSearch(r.chat_id)}
+                <button key={r.msg_id} onClick={() => openChatFromSearch(r.chat_id, r.msg_id)}
                   className="w-full flex items-start gap-3 px-4 py-3 hover:bg-white/5 transition-colors text-left border-b border-white/5">
                   <div className="w-9 h-9 rounded-2xl bg-sky-500/15 border border-sky-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
                     <Icon name={r.is_group ? "Users" : "MessageCircle"} size={15} className="text-sky-400" />
