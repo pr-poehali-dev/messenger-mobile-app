@@ -299,6 +299,8 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
   const [showMembers, setShowMembers] = useState(false);
   const [members, setMembers] = useState<{ id: number; name: string; status: string; role: string; can_post: boolean; is_me: boolean }[]>([]);
   const [membersLoading, setMembersLoading] = useState(false);
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const [confirmKick, setConfirmKick] = useState<{ id: number; name: string } | null>(null);
   const [editingChat, setEditingChat] = useState(false);
   const [editName, setEditName] = useState("");
   const [editDesc, setEditDesc] = useState("");
@@ -560,25 +562,25 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
   }
 
   async function leaveGroup() {
-    const ok = window.confirm(`Покинуть группу «${chat.name}»?`);
-    if (!ok) return;
-    await fetch(`${CHATS_URL}/leave`, {
-      method: "POST", headers: apiHeaders(token),
-      body: JSON.stringify({ chat_id: chat.id }),
-    });
-    setLeftGroup(true);
-    setTimeout(() => onBack(), 800);
+    try {
+      await fetch(`${CHATS_URL}/leave`, {
+        method: "POST", headers: apiHeaders(token),
+        body: JSON.stringify({ chat_id: chat.id }),
+      });
+      setLeftGroup(true);
+      setTimeout(() => onBack(), 800);
+    } catch { /* ignore */ } finally { setConfirmLeave(false); }
   }
 
-  async function kickMember(memberId: number, memberName: string) {
-    const ok = window.confirm(`Удалить ${memberName} из группы?`);
-    if (!ok) return;
-    await fetch(`${CHATS_URL}/kick`, {
-      method: "POST", headers: apiHeaders(token),
-      body: JSON.stringify({ chat_id: chat.id, user_id: memberId }),
-    });
-    setMembers(prev => prev.filter(m => m.id !== memberId));
-    loadMessages(true);
+  async function kickMember(memberId: number) {
+    try {
+      await fetch(`${CHATS_URL}/kick`, {
+        method: "POST", headers: apiHeaders(token),
+        body: JSON.stringify({ chat_id: chat.id, user_id: memberId }),
+      });
+      setMembers(prev => prev.filter(m => m.id !== memberId));
+      loadMessages(true);
+    } catch { /* ignore */ } finally { setConfirmKick(null); }
   }
 
   const myRole = members.find(m => m.is_me)?.role ?? chat.my_role;
@@ -604,11 +606,13 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
   }
 
   async function setMemberRole(memberId: number, role: string, canPost?: boolean) {
-    await fetch(`${CHATS_URL}/set-role`, {
-      method: "POST", headers: apiHeaders(token),
-      body: JSON.stringify({ chat_id: chat.id, user_id: memberId, role, can_post: canPost }),
-    });
-    setMembers(prev => prev.map(m => m.id === memberId ? { ...m, role, can_post: canPost ?? m.can_post } : m));
+    try {
+      await fetch(`${CHATS_URL}/set-role`, {
+        method: "POST", headers: apiHeaders(token),
+        body: JSON.stringify({ chat_id: chat.id, user_id: memberId, role, can_post: canPost }),
+      });
+      setMembers(prev => prev.map(m => m.id === memberId ? { ...m, role, can_post: canPost ?? m.can_post } : m));
+    } catch { /* ignore */ }
   }
 
   async function searchAddMember(q: string) {
@@ -626,12 +630,14 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
   }
 
   async function addMember(userId: number, userName: string) {
-    await fetch(`${CHATS_URL}/add-members`, {
-      method: "POST", headers: apiHeaders(token),
-      body: JSON.stringify({ chat_id: chat.id, members: [userId] }),
-    });
-    setMembers(prev => [...prev, { id: userId, name: userName, status: "offline", role: "member", can_post: !chat.is_channel, is_me: false }]);
-    setAddMemberSearch(""); setAddMemberResults([]);
+    try {
+      await fetch(`${CHATS_URL}/add-members`, {
+        method: "POST", headers: apiHeaders(token),
+        body: JSON.stringify({ chat_id: chat.id, members: [userId] }),
+      });
+      setMembers(prev => [...prev, { id: userId, name: userName, status: "offline", role: "member", can_post: !chat.is_channel, is_me: false }]);
+      setAddMemberSearch(""); setAddMemberResults([]);
+    } catch { /* ignore */ }
   }
 
   // Scroll to bottom only when at bottom or new own message
@@ -722,17 +728,17 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
 
   async function pinMessage(msgId: number | string, pin: boolean) {
     setMenuMsgId(null);
-    const msg = messages.find(m => m.id === msgId);
+    const msg = messagesRef.current.find(m => m.id === msgId);
     if (pin && msg) {
       setPinnedMsg({ id: Number(msgId), text: msg.text, sender_name: msg.sender_name || "Вы", file_type: msg.file_type ?? null });
     } else if (!pin) {
       setPinnedMsg(null);
     }
     setMessages(prev => prev.map(m => m.id === msgId ? { ...m, is_pinned: pin } : pin ? { ...m, is_pinned: false } : m));
-    await fetch(`${CHATS_URL}/pin-message`, {
+    fetch(`${CHATS_URL}/pin-message`, {
       method: "POST", headers: apiHeaders(token),
       body: JSON.stringify({ message_id: msgId, pin }),
-    });
+    }).catch(() => {});
   }
 
   async function loadStats() {
@@ -1138,7 +1144,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
                   {chat.is_channel ? "Подписчики" : "Участники"} · {members.length}
                 </span>
                 {!chat.is_channel && (
-                  <button onClick={leaveGroup}
+                  <button onClick={() => setConfirmLeave(true)}
                     className="flex items-center gap-1 text-[10px] text-red-400 hover:text-red-300 transition-colors px-2 py-1 rounded-lg hover:bg-red-500/10">
                     <Icon name="LogOut" size={11} />
                     Покинуть
@@ -1198,7 +1204,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
                                 <Icon name="ShieldMinus" size={12} className="text-muted-foreground" />
                               </button>
                             )}
-                            <button onClick={() => kickMember(m.id, m.name)}
+                            <button onClick={() => setConfirmKick({ id: m.id, name: m.name })}
                               title="Удалить"
                               className="p-1 rounded-full hover:bg-red-500/20 transition-colors">
                               <Icon name="UserMinus" size={12} className="text-muted-foreground hover:text-red-400 transition-colors" />
@@ -1214,6 +1220,34 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
           </div>
         )}
       </div>
+
+      {/* Диалог подтверждения выхода из группы */}
+      {confirmLeave && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center p-4 bg-black/50 animate-fade-in" onClick={() => setConfirmLeave(false)}>
+          <div className="w-full max-w-md glass border border-white/10 rounded-2xl p-4 space-y-3" onClick={e => e.stopPropagation()}>
+            <p className="text-sm font-semibold text-foreground">Покинуть {chat.is_channel ? "канал" : "группу"}?</p>
+            <p className="text-xs text-muted-foreground">Вы больше не будете получать сообщения из «{chat.name}»</p>
+            <div className="flex gap-2">
+              <button onClick={() => setConfirmLeave(false)} className="flex-1 py-2.5 rounded-xl bg-secondary/60 text-sm text-muted-foreground hover:bg-white/10 transition-colors">Отмена</button>
+              <button onClick={leaveGroup} className="flex-1 py-2.5 rounded-xl bg-red-600 text-sm text-white font-semibold hover:bg-red-700 transition-colors">Покинуть</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Диалог подтверждения удаления участника */}
+      {confirmKick && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center p-4 bg-black/50 animate-fade-in" onClick={() => setConfirmKick(null)}>
+          <div className="w-full max-w-md glass border border-white/10 rounded-2xl p-4 space-y-3" onClick={e => e.stopPropagation()}>
+            <p className="text-sm font-semibold text-foreground">Удалить {confirmKick.name}?</p>
+            <p className="text-xs text-muted-foreground">Участник будет удалён из {chat.is_channel ? "канала" : "группы"}</p>
+            <div className="flex gap-2">
+              <button onClick={() => setConfirmKick(null)} className="flex-1 py-2.5 rounded-xl bg-secondary/60 text-sm text-muted-foreground hover:bg-white/10 transition-colors">Отмена</button>
+              <button onClick={() => kickMember(confirmKick.id)} className="flex-1 py-2.5 rounded-xl bg-red-600 text-sm text-white font-semibold hover:bg-red-700 transition-colors">Удалить</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Pinned message banner */}
       {pinnedMsg && (
@@ -2622,8 +2656,10 @@ function ProfileTab({ user, token, onLogout, onUserUpdate, onDeleteAccount }: {
               </button>
               <button disabled={deleting} onClick={async () => {
                 setDeleting(true);
-                await fetch(`${CHATS_URL}/delete-account`, { method: "POST", headers: apiHeaders(token) });
-                onDeleteAccount();
+                try {
+                  await fetch(`${CHATS_URL}/delete-account`, { method: "POST", headers: apiHeaders(token) });
+                  onDeleteAccount();
+                } catch { setDeleting(false); }
               }}
                 className="flex-1 py-2 rounded-xl bg-red-600 text-sm text-white font-semibold hover:bg-red-700 transition-all disabled:opacity-50">
                 {deleting ? "Удаляем..." : "Удалить"}
@@ -2988,7 +3024,7 @@ function StatusTab({ user }: { user: User }) {
   );
 }
 
-function ContactsTab({ token, onCall }: { token: string; onCall: (userId: number, userName: string) => void }) {
+function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (userId: number, userName: string) => void; onOpenChat?: (userId: number) => void }) {
   const [users, setUsers] = useState<{ id: number; name: string; phone: string; status: string }[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
@@ -3036,7 +3072,7 @@ function ContactsTab({ token, onCall }: { token: string; onCall: (userId: number
               <div className="text-xs text-muted-foreground">{u.phone}</div>
             </div>
             <div className="flex gap-1">
-              <button className="p-2 hover:bg-white/10 rounded-full transition-colors">
+              <button onClick={() => onOpenChat?.(u.id)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
                 <Icon name="MessageCircle" size={16} className="text-sky-400" />
               </button>
               <button onClick={() => onCall(u.id, u.name)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
@@ -3573,6 +3609,16 @@ export default function App() {
     setTab("chats");
   }
 
+  async function openChatWith(userId: number) {
+    if (!token) return;
+    const res = await fetch(`${CHATS_URL}/create`, {
+      method: "POST", headers: apiHeaders(token),
+      body: JSON.stringify({ is_group: false, members: [userId] }),
+    }).catch(() => null);
+    const data = await res?.json().catch(() => null);
+    if (data?.chat_id) setTab("chats");
+  }
+
   async function startCall(calleeId: number, calleeName: string) {
     if (!token) return;
     const res = await fetch(`${CALLS_URL}/initiate`, {
@@ -3661,7 +3707,7 @@ export default function App() {
         c.id === chatId ? { ...c, unread: Math.max(0, c.unread - 1) } : c
       ));
     }} />,
-    contacts: <ContactsTab token={token} onCall={startCall} />,
+    contacts: <ContactsTab token={token} onCall={startCall} onOpenChat={openChatWith} />,
     calls: <CallsTab token={token} onCall={startCall} />,
     status: <StatusTab user={user} />,
     profile: <ProfileTab user={user} token={token} onLogout={handleLogout} onUserUpdate={u => { setUser(u); localStorage.setItem("pulse_user", JSON.stringify(u)); }} onDeleteAccount={handleLogout} />,
