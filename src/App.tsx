@@ -173,7 +173,7 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User, isNew?: bo
       <div className="relative z-10 flex flex-col justify-center flex-1 px-6 py-8">
         <div className="text-center mb-8 animate-fade-in">
           <div className="w-20 h-20 mx-auto mb-4">
-            <img src="https://cdn.poehali.dev/projects/84792fb2-1985-42c4-8056-a4e27799a11a/bucket/2069fcb7-f721-4674-b0d8-51603e738767.png" alt="Каспер" className="w-full h-full object-contain rounded-3xl" />
+            <img src="https://cdn.poehali.dev/projects/84792fb2-1985-42c4-8056-a4e27799a11a/bucket/2069fcb7-f721-4674-b0d8-51603e738767.png" alt="Каспер" className="w-full h-full object-cover rounded-full" style={{mixBlendMode: 'normal', background: 'transparent'}} />
           </div>
           <h1 className="text-4xl font-golos font-black italic mb-1 kasper-title uppercase">Каспер</h1>
           <p className="text-muted-foreground text-sm">Мессенджер вашего сообщества</p>
