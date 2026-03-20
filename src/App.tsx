@@ -2295,6 +2295,7 @@ function CallScreen({ session, token, onEnd }: { session: CallSession; token: st
   const endedRef = useRef(false);
   const pendingCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
   const remoteDescSetRef = useRef(false);
+  const callStatusRef = useRef<"ringing"|"active">(session.status === "active" ? "active" : "ringing");
 
   const ICE_SERVERS = [
     { urls: "stun:stun.l.google.com:19302" },
@@ -2351,7 +2352,7 @@ function CallScreen({ session, token, onEnd }: { session: CallSession; token: st
 
       pc.onconnectionstatechange = () => {
         const state = pc.connectionState;
-        if (state === "connected") setCallStatus("active");
+        if (state === "connected") { callStatusRef.current = "active"; setCallStatus("active"); }
         if (state === "disconnected" || state === "failed") endCall();
       };
 
@@ -2379,7 +2380,10 @@ function CallScreen({ session, token, onEnd }: { session: CallSession; token: st
         const data = await res.json().catch(() => ({}));
 
         if (data.call?.status === "ended" || data.call?.status === "declined") { endCall(); return; }
-        if (data.call?.status === "active" && callStatus !== "active") setCallStatus("active");
+        if (data.call?.status === "active" && callStatusRef.current !== "active") {
+          callStatusRef.current = "active";
+          setCallStatus("active");
+        }
 
         for (const sig of (data.signals ?? [])) {
           lastSignalIdRef.current = sig.id;
@@ -3228,7 +3232,7 @@ export default function App() {
   async function acceptCall(session: CallSession) {
     if (!token) return;
     await fetch(`${CALLS_URL}/answer`, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ call_id: session.callId }) });
-    setActiveCall({ ...session, status: "active" });
+    setActiveCall({ ...session, status: "ringing" });
     setIncomingCall(null);
   }
 

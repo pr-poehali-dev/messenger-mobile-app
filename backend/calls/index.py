@@ -117,7 +117,7 @@ def handler(event: dict, context) -> dict:
                 cur.execute(f"""
                     INSERT INTO {SCHEMA}.call_signals (call_id, from_user_id, signal_type, payload)
                     VALUES (%s, %s, %s, %s) RETURNING id
-                """, (call_id, uid, signal_type, json.dumps(payload) if not isinstance(payload, str) else payload))
+                """, (call_id, uid, signal_type, payload if isinstance(payload, str) else json.dumps(payload)))
                 sig_id = cur.fetchone()[0]
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"signal_id": sig_id})}
@@ -125,7 +125,7 @@ def handler(event: dict, context) -> dict:
         # GET /poll?call_id=X&last_signal_id=Y — получить новые сигналы и статус звонка
         if path.endswith("/poll") and method == "GET":
             params = event.get("queryStringParameters") or {}
-            call_id = params.get("call_id")
+            call_id = int(params.get("call_id", 0))
             last_signal_id = int(params.get("last_signal_id", 0))
 
             with conn.cursor() as cur:
