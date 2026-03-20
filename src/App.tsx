@@ -57,6 +57,11 @@ interface Chat {
   last_time: string | null;
   unread: number;
   is_group: boolean;
+  is_channel?: boolean;
+  description?: string | null;
+  avatar_url?: string | null;
+  is_public?: boolean;
+  can_post?: boolean;
   my_role?: UserRole;
   member_count?: number;
   online?: boolean;
@@ -1516,43 +1521,49 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
           </div>
         )}
 
-        <div className="flex items-end gap-2">
-          <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileSelect}
-            accept="image/*,video/*,audio/*,application/pdf,.doc,.docx,.xls,.xlsx,.zip,.txt,.mp4,.mp3,.mov,.webm" />
-          {!isRecording && (
-            <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
-              className={`p-2 rounded-full transition-all flex-shrink-0 ${uploading ? "opacity-50" : "hover:bg-white/10"}`}>
-              {uploading
-                ? <div className="w-5 h-5 border-2 border-blue-400/30 border-t-blue-400 rounded-full animate-spin" />
-                : <Icon name="Paperclip" size={20} className="text-muted-foreground" />}
-            </button>
-          )}
-          {isRecording
-            ? <div className="flex-1 flex items-center justify-center py-2.5 text-sm text-muted-foreground">
-                Проведи влево, чтобы отменить
-              </div>
-            : <textarea value={text} onChange={e => { setText(e.target.value); sendTyping(); }}
-                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-                placeholder="Сообщение..." rows={1}
-                className="flex-1 bg-secondary/60 border border-white/10 rounded-2xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:border-sky-500/50 transition-all"
-                style={{ maxHeight: "100px" }} />
-          }
-          {(text.trim() || pendingFile)
-            ? <button onClick={send}
-                className="p-3 rounded-full transition-all flex-shrink-0 bg-gradient-to-br from-blue-600 to-blue-700 hover:scale-105 shadow-[0_0_20px_rgba(0,180,230,0.5)]">
-                <Icon name="Send" size={16} className="text-white" />
-              </button>
-            : isRecording
-              ? <button onClick={stopAndSendRecording}
-                  className="p-3 rounded-full transition-all flex-shrink-0 bg-gradient-to-br from-red-500 to-red-600 hover:scale-105 shadow-[0_0_20px_rgba(239,68,68,0.5)]">
-                  <Icon name="Send" size={16} className="text-white" />
+        {chat.is_channel && !chat.can_post
+          ? <div className="flex items-center justify-center gap-2 py-3 text-muted-foreground">
+              <Icon name="Radio" size={14} className="text-purple-400" />
+              <span className="text-sm">Только администраторы могут писать в канале</span>
+            </div>
+          : <div className="flex items-end gap-2">
+              <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileSelect}
+                accept="image/*,video/*,audio/*,application/pdf,.doc,.docx,.xls,.xlsx,.zip,.txt,.mp4,.mp3,.mov,.webm" />
+              {!isRecording && (
+                <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
+                  className={`p-2 rounded-full transition-all flex-shrink-0 ${uploading ? "opacity-50" : "hover:bg-white/10"}`}>
+                  {uploading
+                    ? <div className="w-5 h-5 border-2 border-blue-400/30 border-t-blue-400 rounded-full animate-spin" />
+                    : <Icon name="Paperclip" size={20} className="text-muted-foreground" />}
                 </button>
-              : <button onMouseDown={startRecording} onTouchStart={startRecording}
-                  className="p-3 rounded-full transition-all flex-shrink-0 bg-secondary hover:bg-white/10">
-                  <Icon name="Mic" size={16} className="text-muted-foreground" />
-                </button>
-          }
-        </div>
+              )}
+              {isRecording
+                ? <div className="flex-1 flex items-center justify-center py-2.5 text-sm text-muted-foreground">
+                    Проведи влево, чтобы отменить
+                  </div>
+                : <textarea value={text} onChange={e => { setText(e.target.value); sendTyping(); }}
+                    onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+                    placeholder="Сообщение..." rows={1}
+                    className="flex-1 bg-secondary/60 border border-white/10 rounded-2xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:border-sky-500/50 transition-all"
+                    style={{ maxHeight: "100px" }} />
+              }
+              {(text.trim() || pendingFile)
+                ? <button onClick={send}
+                    className="p-3 rounded-full transition-all flex-shrink-0 bg-gradient-to-br from-blue-600 to-blue-700 hover:scale-105 shadow-[0_0_20px_rgba(0,180,230,0.5)]">
+                    <Icon name="Send" size={16} className="text-white" />
+                  </button>
+                : isRecording
+                  ? <button onClick={stopAndSendRecording}
+                      className="p-3 rounded-full transition-all flex-shrink-0 bg-gradient-to-br from-red-500 to-red-600 hover:scale-105 shadow-[0_0_20px_rgba(239,68,68,0.5)]">
+                      <Icon name="Send" size={16} className="text-white" />
+                    </button>
+                  : <button onMouseDown={startRecording} onTouchStart={startRecording}
+                      className="p-3 rounded-full transition-all flex-shrink-0 bg-secondary hover:bg-white/10">
+                      <Icon name="Mic" size={16} className="text-muted-foreground" />
+                    </button>
+              }
+            </div>
+        }
       </div>
 
       {/* Forward modal */}
@@ -1644,11 +1655,13 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: stri
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
-  const [createMode, setCreateMode] = useState<"direct" | "group">("direct");
+  const [createMode, setCreateMode] = useState<"direct" | "group" | "channel">("direct");
   const [newChatSearch, setNewChatSearch] = useState("");
   const [foundUsers, setFoundUsers] = useState<{ id: number; name: string; phone: string; status: string }[]>([]);
   const [selectedUsers, setSelectedUsers] = useState<{ id: number; name: string }[]>([]);
   const [groupName, setGroupName] = useState("");
+  const [groupDescription, setGroupDescription] = useState("");
+  const [channelPublic, setChannelPublic] = useState(false);
   const [groupCreating, setGroupCreating] = useState(false);
   const [contextChat, setContextChat] = useState<Chat | null>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1683,7 +1696,7 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: stri
 
   function resetCreate() {
     setCreating(false); setNewChatSearch(""); setFoundUsers([]);
-    setSelectedUsers([]); setGroupName(""); setCreateMode("direct");
+    setSelectedUsers([]); setGroupName(""); setGroupDescription(""); setChannelPublic(false); setCreateMode("direct");
   }
 
   async function startChat(userId: number) {
@@ -1696,14 +1709,18 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: stri
   }
 
   async function createGroup() {
-    if (!groupName.trim() || selectedUsers.length < 1) return;
+    if (!groupName.trim()) return;
     setGroupCreating(true);
     try {
+      const isChannel = createMode === "channel";
       const res = await fetch(`${CHATS_URL}/create`, {
         method: "POST", headers: apiHeaders(token),
         body: JSON.stringify({
-          is_group: true,
+          is_group: !isChannel,
+          is_channel: isChannel,
           name: groupName.trim(),
+          description: groupDescription.trim() || null,
+          is_public: isChannel ? channelPublic : false,
           members: selectedUsers.map(u => u.id),
         }),
       });
@@ -1800,29 +1817,53 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: stri
 
         {creating && (
           <div className="glass rounded-2xl p-3 mb-3 animate-fade-in space-y-3">
-            {/* Mode switcher */}
+            {/* Mode switcher: Личный / Группа / Канал */}
             <div className="flex gap-1 p-1 glass rounded-xl">
-              {(["direct", "group"] as const).map(m => (
-                <button key={m} onClick={() => { setCreateMode(m); setSelectedUsers([]); setNewChatSearch(""); setFoundUsers([]); }}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-semibold transition-all
-                    ${createMode === m ? "bg-gradient-to-r from-blue-600 to-blue-700 text-white" : "text-muted-foreground hover:text-foreground"}`}>
-                  <Icon name={m === "direct" ? "MessageCircle" : "Users"} size={12} />
-                  {m === "direct" ? "Личный" : "Группа"}
+              {([
+                { id: "direct", label: "Личный", icon: "MessageCircle" },
+                { id: "group", label: "Группа", icon: "Users" },
+                { id: "channel", label: "Канал", icon: "Radio" },
+              ] as const).map(m => (
+                <button key={m.id}
+                  onClick={() => { setCreateMode(m.id); setSelectedUsers([]); setNewChatSearch(""); setFoundUsers([]); setGroupName(""); setGroupDescription(""); }}
+                  className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold transition-all
+                    ${createMode === m.id
+                      ? m.id === "channel" ? "bg-gradient-to-r from-purple-600 to-violet-700 text-white" : "bg-gradient-to-r from-blue-600 to-blue-700 text-white"
+                      : "text-muted-foreground hover:text-foreground"}`}>
+                  <Icon name={m.icon} size={11} />
+                  {m.label}
                 </button>
               ))}
             </div>
 
-            {/* Group name field */}
-            {createMode === "group" && (
-              <div className="animate-fade-in">
+            {/* Название группы / канала */}
+            {(createMode === "group" || createMode === "channel") && (
+              <div className="space-y-2 animate-fade-in">
                 <input value={groupName} onChange={e => setGroupName(e.target.value)}
-                  placeholder="Название группы..."
+                  placeholder={createMode === "channel" ? "Название канала..." : "Название группы..."}
                   className="w-full bg-secondary/60 border border-white/10 rounded-xl px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 transition-all" />
+                <textarea value={groupDescription} onChange={e => setGroupDescription(e.target.value)}
+                  placeholder="Описание (необязательно)..."
+                  rows={2}
+                  className="w-full bg-secondary/60 border border-white/10 rounded-xl px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 transition-all resize-none" />
+                {createMode === "channel" && (
+                  <button onClick={() => setChannelPublic(p => !p)}
+                    className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl border transition-all ${channelPublic ? "bg-purple-500/15 border-purple-500/30" : "bg-secondary/40 border-white/10"}`}>
+                    <div className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 transition-all ${channelPublic ? "bg-purple-500 border-purple-500" : "border-white/30"}`}>
+                      {channelPublic && <Icon name="Check" size={10} className="text-white" />}
+                    </div>
+                    <div className="flex-1 text-left">
+                      <p className="text-xs font-medium text-foreground">Публичный канал</p>
+                      <p className="text-[10px] text-muted-foreground">Любой может найти и подписаться</p>
+                    </div>
+                    <Icon name={channelPublic ? "Globe" : "Lock"} size={14} className={channelPublic ? "text-purple-400" : "text-muted-foreground"} />
+                  </button>
+                )}
               </div>
             )}
 
-            {/* Selected chips (group mode) */}
-            {createMode === "group" && selectedUsers.length > 0 && (
+            {/* Выбранные участники */}
+            {(createMode === "group" || createMode === "channel") && selectedUsers.length > 0 && (
               <div className="flex flex-wrap gap-1.5 animate-fade-in">
                 {selectedUsers.map(u => (
                   <div key={u.id} className="flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-blue-500/20 border border-blue-500/30">
@@ -1836,35 +1877,34 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: stri
               </div>
             )}
 
-            {/* Search */}
+            {/* Поиск пользователей */}
             <div className="relative">
               <Icon name="Search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <input value={newChatSearch}
                 onChange={e => { setNewChatSearch(e.target.value); searchUsers(e.target.value); }}
-                placeholder={createMode === "group" ? "Добавить участников..." : "Имя или номер..."}
+                placeholder={createMode === "direct" ? "Имя или номер..." : createMode === "channel" ? "Добавить администраторов..." : "Добавить участников..."}
                 className="w-full bg-secondary/60 border border-white/10 rounded-xl pl-8 pr-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 transition-all" />
             </div>
 
-            {/* Results */}
+            {/* Результаты поиска */}
             {foundUsers.length > 0 && (
               <div className="space-y-0.5 max-h-40 overflow-y-auto">
                 {foundUsers.map(u => {
-                  const selected = createMode === "group" && selectedUsers.some(s => s.id === u.id);
+                  const selected = createMode !== "direct" && selectedUsers.some(s => s.id === u.id);
                   return (
                     <button key={u.id}
-                      onClick={() => createMode === "group" ? toggleUser(u) : startChat(u.id)}
-                      className={`w-full flex items-center gap-2 p-2 rounded-xl transition-all
-                        ${selected ? "bg-blue-500/15 border border-blue-500/20" : "hover:bg-white/5"}`}>
+                      onClick={() => createMode === "direct" ? startChat(u.id) : toggleUser(u)}
+                      className={`w-full flex items-center gap-2 p-2 rounded-xl transition-all ${selected ? "bg-blue-500/15 border border-blue-500/20" : "hover:bg-white/5"}`}>
                       <AvatarEl name={u.name} size="xs" status={u.status} />
                       <div className="flex-1 min-w-0 text-left">
                         <div className="text-sm font-medium text-foreground truncate">{u.name}</div>
                         <div className="text-xs text-muted-foreground">{u.phone}</div>
                       </div>
-                      {createMode === "group"
-                        ? <div className={`w-5 h-5 rounded-full border flex items-center justify-center flex-shrink-0 transition-all ${selected ? "bg-blue-500 border-blue-500" : "border-white/20"}`}>
+                      {createMode === "direct"
+                        ? <Icon name="MessageCircle" size={14} className="text-sky-400" />
+                        : <div className={`w-5 h-5 rounded-full border flex items-center justify-center flex-shrink-0 transition-all ${selected ? "bg-blue-500 border-blue-500" : "border-white/20"}`}>
                             {selected && <Icon name="Check" size={10} className="text-white" />}
-                          </div>
-                        : <Icon name="MessageCircle" size={14} className="text-sky-400" />}
+                          </div>}
                     </button>
                   );
                 })}
@@ -1874,13 +1914,16 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: stri
               <p className="text-xs text-muted-foreground text-center py-1">Пользователи не найдены</p>
             )}
 
-            {/* Create group button */}
-            {createMode === "group" && selectedUsers.length > 0 && groupName.trim() && (
+            {/* Кнопка создания группы/канала */}
+            {(createMode === "group" || createMode === "channel") && groupName.trim() && (
               <button onClick={createGroup} disabled={groupCreating}
-                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm font-semibold hover:opacity-90 transition-all disabled:opacity-60 flex items-center justify-center gap-2 animate-fade-in">
+                className={`w-full py-2.5 rounded-xl text-white text-sm font-semibold hover:opacity-90 transition-all disabled:opacity-60 flex items-center justify-center gap-2 animate-fade-in
+                  ${createMode === "channel" ? "bg-gradient-to-r from-purple-600 to-violet-700" : "bg-gradient-to-r from-blue-600 to-blue-700"}`}>
                 {groupCreating
                   ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />Создаём...</>
-                  : <><Icon name="Users" size={14} />Создать группу «{groupName}» · {selectedUsers.length + 1} чел.</>}
+                  : createMode === "channel"
+                    ? <><Icon name="Radio" size={14} />Создать канал «{groupName}»{selectedUsers.length > 0 ? ` · ${selectedUsers.length + 1} чел.` : ""}</>
+                    : <><Icon name="Users" size={14} />Создать группу «{groupName}» · {selectedUsers.length + 1} чел.</>}
               </button>
             )}
           </div>
@@ -1976,7 +2019,12 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: stri
               style={{ animationDelay: `${i * 0.04}s` }}>
               <div className="relative flex-shrink-0">
                 <AvatarEl name={chat.name} size="md" status={!chat.is_group ? (chat.peer_online ? "online" : "offline") : undefined} />
-                {chat.is_group && (
+                {chat.is_channel && (
+                  <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-gradient-to-br from-purple-500 to-violet-600 flex items-center justify-center">
+                    <Icon name="Radio" size={10} className="text-white" />
+                  </div>
+                )}
+                {chat.is_group && !chat.is_channel && (
                   <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center">
                     <Icon name="Users" size={10} className="text-white" />
                   </div>
@@ -1984,14 +2032,19 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: stri
               </div>
               <div className="flex-1 min-w-0 text-left">
                 <div className="flex items-center justify-between">
-                  <span className="font-golos font-semibold text-foreground text-sm truncate">{chat.name}</span>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="font-golos font-semibold text-foreground text-sm truncate">{chat.name}</span>
+                    {chat.is_channel && chat.is_public && <Icon name="Globe" size={10} className="text-purple-400 flex-shrink-0" />}
+                  </div>
                   <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
                     {chat.pinned && <Icon name="Pin" size={11} className="text-sky-400" />}
                     <span className={`text-[11px] ${chat.unread > 0 ? "text-sky-400" : "text-muted-foreground"}`}>{relTime}</span>
                   </div>
                 </div>
                 <div className="flex items-center justify-between mt-0.5">
-                  <span className="text-xs text-muted-foreground truncate">{chat.last_msg || "Нет сообщений"}</span>
+                  <span className="text-xs text-muted-foreground truncate">
+                    {chat.last_msg || (chat.is_channel && chat.description ? chat.description : "Нет сообщений")}
+                  </span>
                   {chat.unread > 0 && (
                     <span className="flex-shrink-0 ml-2 min-w-[20px] h-5 px-1.5 rounded-full bg-gradient-to-r from-blue-600 to-blue-700 text-white text-[10px] font-bold flex items-center justify-center">
                       {chat.unread}

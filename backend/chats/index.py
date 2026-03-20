@@ -102,25 +102,26 @@ def handler(event: dict, context) -> dict:
                         cm.role,
                         peer.last_seen AS peer_last_seen,
                         cm.pinned,
-                        peer.id AS peer_id
+                        peer.id AS peer_id,
+                        COALESCE(c.is_channel, FALSE) AS is_channel,
+                        c.description,
+                        c.avatar_url,
+                        COALESCE(c.is_public, FALSE) AS is_public,
+                        COALESCE(cm.can_post, FALSE) AS can_post
                     FROM {SCHEMA}.chats c
                     JOIN {SCHEMA}.chat_members cm ON cm.chat_id = c.id AND cm.user_id = %s AND cm.hidden = FALSE
-                    -- последнее сообщение через DISTINCT ON
                     LEFT JOIN LATERAL (
                         SELECT text, created_at FROM {SCHEMA}.messages
                         WHERE chat_id = c.id AND hidden_at IS NULL
                         ORDER BY created_at DESC LIMIT 1
                     ) lm ON TRUE
-                    -- непрочитанные
                     LEFT JOIN LATERAL (
                         SELECT COUNT(*) AS cnt FROM {SCHEMA}.messages
                         WHERE chat_id = c.id AND sender_id != %s AND is_read = FALSE AND hidden_at IS NULL
                     ) unread ON TRUE
-                    -- количество участников
                     LEFT JOIN LATERAL (
                         SELECT COUNT(*) AS cnt FROM {SCHEMA}.chat_members WHERE chat_id = c.id
                     ) mc ON TRUE
-                    -- собеседник (только для личных чатов)
                     LEFT JOIN LATERAL (
                         SELECT u2.id, u2.name, u2.last_seen
                         FROM {SCHEMA}.chat_members cm2
@@ -149,6 +150,11 @@ def handler(event: dict, context) -> dict:
                         "peer_last_seen": peer_last_seen.isoformat() if peer_last_seen else None,
                         "pinned": bool(r[9]),
                         "peer_id": r[10],
+                        "is_channel": bool(r[11]),
+                        "description": r[12],
+                        "avatar_url": r[13],
+                        "is_public": bool(r[14]),
+                        "can_post": bool(r[15]),
                     })
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"chats": chats})}
 
@@ -602,32 +608,46 @@ def handler(event: dict, context) -> dict:
                 })
             }
 
-        # POST /create — создать чат
+        # POST /create — создать чат, группу или канал
         if method == "POST" and "create" in path:
             body = json.loads(event.get("body") or "{}")
             is_group = body.get("is_group", False)
-            name = body.get("name", "").strip()
-            members = body.get("members", [])  # list of user_ids
+            is_channel = body.get("is_channel", False)
+            name = (body.get("name") or "").strip()
+            description = (body.get("description") or "").strip() or None
+            is_public = bool(body.get("is_public", False))
+            members = body.get("members", [])
+
+            if (is_group or is_channel) and not name:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Название обязательно"})}
+
+            # Канал — это тоже группа с флагом is_channel
+            if is_channel:
+                is_group = True
 
             with conn.cursor() as cur:
                 cur.execute(
-                    f"INSERT INTO {SCHEMA}.chats (name, is_group, created_by) VALUES (%s, %s, %s) RETURNING id",
-                    (name if is_group else None, is_group, user_id)
+                    f"""INSERT INTO {SCHEMA}.chats (name, is_group, is_channel, description, is_public, created_by)
+                        VALUES (%s, %s, %s, %s, %s, %s) RETURNING id""",
+                    (name if is_group else None, is_group, is_channel, description, is_public, user_id)
                 )
                 chat_id = cur.fetchone()[0]
-                # Add creator as admin
+                # Создатель — admin с правом публикации
                 cur.execute(
-                    f"INSERT INTO {SCHEMA}.chat_members (chat_id, user_id, role) VALUES (%s, %s, 'admin')",
+                    f"INSERT INTO {SCHEMA}.chat_members (chat_id, user_id, role, can_post) VALUES (%s, %s, 'admin', TRUE)",
                     (chat_id, user_id)
                 )
                 for mid in members:
                     if mid != user_id:
+                        # В канале участники не могут постить по умолчанию
+                        can_post_val = not is_channel
                         cur.execute(
-                            f"INSERT INTO {SCHEMA}.chat_members (chat_id, user_id, role) VALUES (%s, %s, 'member') ON CONFLICT DO NOTHING",
-                            (chat_id, mid)
+                            f"""INSERT INTO {SCHEMA}.chat_members (chat_id, user_id, role, can_post)
+                                VALUES (%s, %s, 'member', %s) ON CONFLICT DO NOTHING""",
+                            (chat_id, mid, can_post_val)
                         )
             conn.commit()
-            return {"statusCode": 200, "headers": cors, "body": json.dumps({"chat_id": chat_id})}
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"chat_id": chat_id, "is_channel": is_channel})}
 
         # POST /typing — сообщить что пользователь печатает
         if method == "POST" and "typing" in path:
