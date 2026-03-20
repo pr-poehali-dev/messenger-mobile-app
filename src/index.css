@@ -111,6 +111,31 @@
     @apply bg-background text-foreground;
     font-family: "Rubik", sans-serif;
     overflow: hidden;
+    /* Отключаем резиновый скролл iOS */
+    overscroll-behavior: none;
+    -webkit-overflow-scrolling: touch;
+    /* Предотвращаем выделение текста на тапе */
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    /* Safe area для iPhone с чёлкой */
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+
+  html {
+    height: -webkit-fill-available;
+    height: 100dvh;
+    overscroll-behavior: none;
+  }
+
+  #root {
+    height: 100dvh;
+    height: -webkit-fill-available;
+    overflow: hidden;
+    position: fixed;
+    inset: 0;
   }
 
   ::-webkit-scrollbar {
@@ -132,6 +157,40 @@
 }
 
 @layer utilities {
+  /* Safe area паддинги для iPhone */
+  .pb-safe {
+    padding-bottom: max(env(safe-area-inset-bottom), 0.5rem);
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top);
+  }
+  .mb-safe {
+    margin-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* Убираем резиновый скролл внутри скролл-контейнеров */
+  .scroll-container {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+  }
+
+  /* Запрещаем выделение на кнопках */
+  button,
+  a {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    user-select: none;
+  }
+
+  /* Плавные скроллы на мобайле */
+  input,
+  textarea {
+    -webkit-appearance: none;
+    appearance: none;
+    border-radius: 0;
+  }
+
   .glass {
     background: var(--surface-glass);
     backdrop-filter: blur(20px);

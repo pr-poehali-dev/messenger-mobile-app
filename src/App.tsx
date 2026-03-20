@@ -268,7 +268,7 @@ function BottomNav({ active, onChange, unreadCount }: {
   active: Tab; onChange: (t: Tab) => void; unreadCount: number;
 }) {
   return (
-    <nav className="flex-shrink-0 glass-strong border-t border-white/5 px-1 pb-1">
+    <nav className="flex-shrink-0 glass-strong border-t border-white/5 px-1 pb-safe">
       <div className="flex items-center justify-around py-1.5">
         {NAV_ITEMS.map(({ tab, icon, label }) => {
           const isActive = active === tab;
@@ -1164,7 +1164,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
                   {addMemberLoading && <div className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 border-2 border-sky-500/30 border-t-sky-500 rounded-full animate-spin" />}
                 </div>
                 {addMemberResults.length > 0 && (
-                  <div className="border-t border-white/5 divide-y divide-white/5 max-h-40 overflow-y-auto">
+                  <div className="border-t border-white/5 divide-y divide-white/5 max-h-40 overflow-y-auto scroll-container">
                     {addMemberResults.map(u => (
                       <button key={u.id} onClick={() => addMember(u.id, u.name)}
                         className="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/5 transition-colors text-left">
@@ -1200,7 +1200,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
                   <div className="w-5 h-5 border-2 border-sky-500/30 border-t-sky-500 rounded-full animate-spin" />
                 </div>
               ) : (
-                <div className="space-y-0.5 max-h-52 overflow-y-auto">
+                <div className="space-y-0.5 max-h-52 overflow-y-auto scroll-container">
                   {members.map(m => {
                     const roleColors: Record<string, string> = {
                       admin: "text-yellow-400 bg-yellow-400/10 border-yellow-400/20",
@@ -1395,7 +1395,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
 
       <div
         ref={scrollContainerRef}
-        className="flex-1 overflow-y-auto px-4 py-4 space-y-2"
+        className="flex-1 overflow-y-auto scroll-container px-4 py-4 space-y-2"
         style={{ background: "radial-gradient(ellipse at top, rgba(0,119,182,0.04) 0%, transparent 60%)" }}
         onScroll={e => {
           const el = e.currentTarget;
@@ -1849,7 +1849,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto px-4 space-y-1 pb-4">
+          <div className="flex-1 overflow-y-auto scroll-container px-4 space-y-1 pb-4">
             {allChats
               .filter(c => c.id !== chat.id && c.name.toLowerCase().includes(forwardSearch.toLowerCase()))
               .map(c => {
@@ -2171,7 +2171,7 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: stri
 
             {/* Результаты поиска */}
             {foundUsers.length > 0 && (
-              <div className="space-y-0.5 max-h-40 overflow-y-auto">
+              <div className="space-y-0.5 max-h-40 overflow-y-auto scroll-container">
                 {foundUsers.map(u => {
                   const selected = createMode !== "direct" && selectedUsers.some(s => s.id === u.id);
                   return (
@@ -2225,7 +2225,7 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: stri
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto scroll-container">
         {loading && (
           <div className="flex flex-col items-center justify-center h-full gap-4">
             <div className="w-8 h-8 border-2 border-sky-500/30 border-t-sky-500 rounded-full animate-spin" />
@@ -2579,7 +2579,7 @@ function ProfileTab({ user, token, onLogout, onUserUpdate, onDeleteAccount }: {
   }
 
   return (
-    <div className="flex flex-col h-full overflow-y-auto">
+    <div className="flex flex-col h-full overflow-y-auto scroll-container">
       {/* Hero */}
       <div className="relative px-4 pt-8 pb-6 text-center overflow-hidden"
         style={{ background: "radial-gradient(ellipse at top, rgba(0,119,182,0.15) 0%, transparent 70%)" }}>
@@ -3130,7 +3130,7 @@ function CallsTab({ token, onCall }: { token: string; onCall: (userId: number, u
       <div className="px-4 pt-4 pb-3">
         <h1 className="text-2xl font-golos font-black text-gradient mb-4">Звонки</h1>
       </div>
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto scroll-container">
         {loading && <div className="text-center py-8 text-sm text-muted-foreground">Загрузка...</div>}
         {!loading && calls.length === 0 && (
           <div className="flex flex-col items-center justify-center h-48 gap-3 text-muted-foreground">
@@ -3203,7 +3203,7 @@ function StatusTab({ user }: { user: User }) {
           )}
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto px-4">
+      <div className="flex-1 overflow-y-auto scroll-container px-4">
         <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">Обновления</div>
         <div className="space-y-3">
           {MOCK_STATUSES.map((s, i) => (
@@ -3421,7 +3421,7 @@ function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (us
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto scroll-container">
         {tab === "my" ? (
           loading
             ? <div className="flex justify-center py-12"><div className="w-6 h-6 border-2 border-sky-500/30 border-t-sky-500 rounded-full animate-spin" /></div>
@@ -3609,7 +3609,7 @@ function SettingsTab({ onLogout, onTestSound }: { onLogout: () => void; onTestSo
           </h1>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 pb-6 space-y-4">
+        <div className="flex-1 overflow-y-auto scroll-container px-4 pb-6 space-y-4">
 
           {section === "chats" && (
             <>
@@ -3899,7 +3899,7 @@ function SettingsTab({ onLogout, onTestSound }: { onLogout: () => void; onTestSo
   }
 
   return (
-    <div className="flex flex-col h-full overflow-y-auto">
+    <div className="flex flex-col h-full overflow-y-auto scroll-container">
       <div className="px-4 pt-4 pb-3">
         <h1 className="text-2xl font-golos font-black text-gradient mb-1">Настройки</h1>
       </div>
@@ -4018,7 +4018,7 @@ function OnboardingScreen({ userName, onDone }: { userName: string; onDone: () =
   }
 
   return (
-    <div className="flex flex-col h-screen max-w-md mx-auto overflow-hidden relative"
+    <div className="flex flex-col h-[100dvh] max-w-md mx-auto overflow-hidden relative"
       style={{ background: "hsl(var(--background))" }}>
 
       {/* Background glow */}
@@ -4156,7 +4156,7 @@ function PinScreen({ mode, onSuccess, onCancel }: {
   const displayPin = isSetup && step === "confirm" ? confirmPin : pin;
 
   return (
-    <div className="flex flex-col h-screen max-w-md mx-auto items-center justify-center px-8 gap-8"
+    <div className="flex flex-col h-[100dvh] max-w-md mx-auto items-center justify-center px-8 gap-8"
       style={{ background: "hsl(var(--background))" }}>
       <div className="flex flex-col items-center gap-3">
         <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center shadow-[0_0_40px_rgba(0,119,182,0.4)]">
@@ -4224,6 +4224,15 @@ function PinScreen({ mode, onSuccess, onCancel }: {
 
 export default function App() {
   useEffect(() => { applyTheme(localStorage.getItem("pulse_theme") !== "light"); }, []);
+
+  // PWA install prompt (Android Chrome)
+  const [installPrompt, setInstallPrompt] = useState<Event | null>(null);
+  const [showInstallBanner, setShowInstallBanner] = useState(false);
+  useEffect(() => {
+    const handler = (e: Event) => { e.preventDefault(); setInstallPrompt(e); setShowInstallBanner(true); };
+    window.addEventListener("beforeinstallprompt", handler);
+    return () => window.removeEventListener("beforeinstallprompt", handler);
+  }, []);
 
   const [token, setToken] = useState<string | null>(() => localStorage.getItem("pulse_token"));
   const [user, setUser] = useState<User | null>(() => {
@@ -4448,7 +4457,7 @@ export default function App() {
 
   if (!token || !user) {
     return (
-      <div className="flex flex-col h-screen max-w-md mx-auto overflow-hidden" style={{ background: "hsl(var(--background))" }}>
+      <div className="flex flex-col h-[100dvh] max-w-md mx-auto overflow-hidden" style={{ background: "hsl(var(--background))" }}>
         <AuthScreen onAuth={handleAuth} />
       </div>
     );
@@ -4485,20 +4494,13 @@ export default function App() {
   };
 
   return (
-    <div className="flex flex-col h-screen max-w-md mx-auto font-rubik overflow-hidden relative"
+    <div className="flex flex-col h-[100dvh] max-w-md mx-auto font-rubik overflow-hidden relative"
       style={{ background: "hsl(var(--background))" }}>
       <div className="fixed inset-0 max-w-md mx-auto pointer-events-none overflow-hidden">
         <div className="absolute -top-20 -right-20 w-64 h-64 rounded-full opacity-[0.04]"
           style={{ background: "radial-gradient(circle, #0077b6, transparent)" }} />
         <div className="absolute -bottom-20 -left-20 w-64 h-64 rounded-full opacity-[0.04]"
           style={{ background: "radial-gradient(circle, #22d3ee, transparent)" }} />
-      </div>
-      <div className="flex-shrink-0 flex items-center justify-between px-6 pt-2 pb-1 text-xs text-muted-foreground relative z-10">
-        <span className="font-semibold">9:41</span>
-        <div className="flex items-center gap-1.5">
-          <Icon name="Wifi" size={11} className="text-muted-foreground" />
-          <Icon name="Battery" size={11} className="text-muted-foreground" />
-        </div>
       </div>
       <div className="flex-1 overflow-hidden relative z-10">{tabs[tab]}</div>
       <BottomNav active={tab} onChange={setTab} unreadCount={unreadCount} />
@@ -4511,6 +4513,21 @@ export default function App() {
       )}
       {activeCall && (
         <CallScreen session={activeCall} token={token} onEnd={() => setActiveCall(null)} />
+      )}
+      {showInstallBanner && installPrompt && (
+        <div className="fixed top-0 left-0 right-0 z-50 flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-blue-700 to-blue-600 text-white text-sm shadow-lg max-w-md mx-auto animate-fade-in">
+          <Icon name="Download" size={18} className="flex-shrink-0" />
+          <span className="flex-1 font-medium">Установить приложение на телефон</span>
+          <button onClick={() => {
+            (installPrompt as { prompt: () => void }).prompt();
+            setShowInstallBanner(false);
+          }} className="px-3 py-1 bg-white/20 rounded-lg font-semibold hover:bg-white/30 transition-all">
+            Установить
+          </button>
+          <button onClick={() => setShowInstallBanner(false)} className="p-1 hover:bg-white/20 rounded-lg transition-all">
+            <Icon name="X" size={14} />
+          </button>
+        </div>
       )}
     </div>
   );
