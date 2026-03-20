@@ -2442,7 +2442,19 @@ function IncomingCallBanner({ session, onAccept, onDecline }: { session: CallSes
     }
 
     ring();
-    return () => { stopped = true; ctx.close(); };
+
+    let vibrateInterval: ReturnType<typeof setInterval> | null = null;
+    if ("vibrate" in navigator) {
+      navigator.vibrate([400, 200, 400]);
+      vibrateInterval = setInterval(() => navigator.vibrate([400, 200, 400]), 1200);
+    }
+
+    return () => {
+      stopped = true;
+      ctx.close();
+      if (vibrateInterval) clearInterval(vibrateInterval);
+      if ("vibrate" in navigator) navigator.vibrate(0);
+    };
   }, []);
 
   return (
