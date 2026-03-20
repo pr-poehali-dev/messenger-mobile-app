@@ -5,6 +5,7 @@ import Icon from "@/components/ui/icon";
 
 const AUTH_URL = "https://functions.poehali.dev/7f5e5202-ad61-4f31-8181-6393be10b3ed";
 const CHATS_URL = "https://functions.poehali.dev/a33600bd-358e-45e6-a8d5-4e32707a3ef1";
+const CALLS_URL = "https://functions.poehali.dev/ec19ea73-ee73-48c3-a4cc-a6104054ed8e";
 
 function apiHeaders(token?: string | null) {
   const h: Record<string, string> = { "Content-Type": "application/json" };
@@ -61,15 +62,20 @@ interface Chat {
   pinned?: boolean;
   peer_online?: boolean;
   peer_last_seen?: string | null;
+  peer_id?: number | null;
+}
+
+// ─── Call types ───────────────────────────────────────────────────────────────
+
+interface CallSession {
+  callId: number;
+  peerId: number;
+  peerName: string;
+  direction: "outgoing" | "incoming";
+  status: "ringing" | "active" | "ended";
 }
 
 // ─── Mock data for non-chat tabs ──────────────────────────────────────────────
-
-const MOCK_CALLS = [
-  { id: "1", name: "Анна Смирнова", type: "incoming" as const, callType: "video" as const, time: "сегодня", duration: "5:32" },
-  { id: "2", name: "Антон Волков", type: "outgoing" as const, callType: "voice" as const, time: "вчера", duration: "2:10" },
-  { id: "3", name: "Михаил Козлов", type: "missed" as const, callType: "voice" as const, time: "вс" },
-];
 
 const MOCK_STATUSES = [
   { id: "1", name: "Анна Смирнова", time: "5 мин", viewed: false, color: "from-blue-500 to-cyan-400", text: "Новый день — новые возможности! ✨" },
@@ -277,8 +283,8 @@ function BottomNav({ active, onChange, unreadCount }: {
 
 // ─── Chat Screen ──────────────────────────────────────────────────────────────
 
-function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRead, initialMsgId }: {
-  chat: Chat; token: string; currentUserId: number; onBack: () => void; allChats: Chat[]; onMessageRead?: () => void; initialMsgId?: number;
+function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRead, initialMsgId, onCall }: {
+  chat: Chat; token: string; currentUserId: number; onBack: () => void; allChats: Chat[]; onMessageRead?: () => void; initialMsgId?: number; onCall?: (userId: number, userName: string) => void;
 }) {
   const [text, setText] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -920,15 +926,10 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
             className={`p-2 rounded-full transition-colors ${showStats ? "bg-blue-500/20 text-sky-400" : "hover:bg-white/10 text-muted-foreground"}`}>
             <Icon name="ChartBar" size={18} />
           </button>
-          {!chat.is_group && (
-            <>
-              <button className="p-2 hover:bg-white/10 rounded-full transition-colors">
-                <Icon name="Video" size={18} className="text-cyan-400" />
-              </button>
-              <button className="p-2 hover:bg-white/10 rounded-full transition-colors">
-                <Icon name="Phone" size={18} className="text-cyan-400" />
-              </button>
-            </>
+          {!chat.is_group && onCall && chat.peer_id && (
+            <button onClick={() => onCall(chat.peer_id!, chat.name)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+              <Icon name="Phone" size={18} className="text-cyan-400" />
+            </button>
           )}
         </div>
 
@@ -1519,7 +1520,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
 
 // ─── Chats Tab ────────────────────────────────────────────────────────────────
 
-function ChatsTab({ token, currentUserId, onMessageRead }: { token: string; currentUserId: number; onMessageRead: (chatId: number) => void }) {
+function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: string; currentUserId: number; onMessageRead: (chatId: number) => void; onCall?: (userId: number, userName: string) => void }) {
   const [chats, setChats] = useState<Chat[]>([]);
   const [activeChat, setActiveChat] = useState<Chat | null>(null);
   const [search, setSearch] = useState("");
@@ -1665,7 +1666,7 @@ function ChatsTab({ token, currentUserId, onMessageRead }: { token: string; curr
   if (activeChat) {
     return <ChatScreen chat={activeChat} token={token} currentUserId={currentUserId}
       onBack={() => { setActiveChat(null); loadChats(); setInitialMsgId(undefined); }} allChats={chats}
-      onMessageRead={() => onMessageRead(activeChat.id)} initialMsgId={initialMsgId} />;
+      onMessageRead={() => onMessageRead(activeChat.id)} initialMsgId={initialMsgId} onCall={onCall} />;
   }
 
   return (
@@ -2282,36 +2283,210 @@ function ProfileTab({ user, token, onLogout, onUserUpdate, onDeleteAccount }: {
 
 // ─── Other Tabs ───────────────────────────────────────────────────────────────
 
-function CallsTab() {
+function CallScreen({ session, token, onEnd }: { session: CallSession; token: string; onEnd: () => void }) {
+  const [elapsed, setElapsed] = useState(0);
+  const [muted, setMuted] = useState(false);
+  const [speakerOn, setSpeakerOn] = useState(true);
+  const pcRef = useRef<RTCPeerConnection | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const lastSignalIdRef = useRef(0);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const endedRef = useRef(false);
+
+  const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }];
+
+  async function sendSignal(type: string, payload: unknown) {
+    await fetch(`${CALLS_URL}/signal`, {
+      method: "POST", headers: apiHeaders(token),
+      body: JSON.stringify({ call_id: session.callId, type, payload }),
+    });
+  }
+
+  async function endCall() {
+    if (endedRef.current) return;
+    endedRef.current = true;
+    if (pollRef.current) clearInterval(pollRef.current);
+    pcRef.current?.close();
+    localStreamRef.current?.getTracks().forEach(t => t.stop());
+    await fetch(`${CALLS_URL}/end`, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ call_id: session.callId }) });
+    onEnd();
+  }
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setInterval>;
+    if (session.status === "active") {
+      timer = setInterval(() => setElapsed(e => e + 1), 1000);
+    }
+    return () => clearInterval(timer);
+  }, [session.status]);
+
+  useEffect(() => {
+    async function init() {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
+      if (!stream) { endCall(); return; }
+      localStreamRef.current = stream;
+
+      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+      pcRef.current = pc;
+      stream.getTracks().forEach(t => pc.addTrack(t, stream));
+
+      pc.ontrack = (e) => {
+        if (!remoteAudioRef.current) {
+          remoteAudioRef.current = new Audio();
+          remoteAudioRef.current.autoplay = true;
+        }
+        remoteAudioRef.current.srcObject = e.streams[0];
+      };
+
+      pc.onicecandidate = (e) => {
+        if (e.candidate) sendSignal("ice-candidate", e.candidate.toJSON());
+      };
+
+      if (session.direction === "outgoing") {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await sendSignal("offer", { sdp: offer.sdp, type: offer.type });
+      }
+
+      pollRef.current = setInterval(async () => {
+        if (endedRef.current) return;
+        const res = await fetch(`${CALLS_URL}/poll?call_id=${session.callId}&last_signal_id=${lastSignalIdRef.current}`, { headers: apiHeaders(token) });
+        const data = await res.json();
+        if (data.call?.status === "ended" || data.call?.status === "declined") { endCall(); return; }
+        for (const sig of data.signals ?? []) {
+          lastSignalIdRef.current = sig.id;
+          const pl = typeof sig.payload === "string" ? JSON.parse(sig.payload) : sig.payload;
+          if (sig.type === "offer" && session.direction === "incoming") {
+            await pc.setRemoteDescription(new RTCSessionDescription(pl));
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            await sendSignal("answer", { sdp: answer.sdp, type: answer.type });
+          } else if (sig.type === "answer") {
+            if (pc.signalingState === "have-local-offer") await pc.setRemoteDescription(new RTCSessionDescription(pl));
+          } else if (sig.type === "ice-candidate") {
+            await pc.addIceCandidate(new RTCIceCandidate(pl)).catch(() => {});
+          }
+        }
+      }, 1500);
+    }
+    init();
+    return () => { endedRef.current = true; if (pollRef.current) clearInterval(pollRef.current); };
+  }, []);
+
+  function toggleMute() {
+    localStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = muted; });
+    setMuted(m => !m);
+  }
+
+  const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col items-center justify-between py-16 px-8 animate-fade-in"
+      style={{ background: "linear-gradient(160deg, #0a1628 0%, #0d2040 50%, #071020 100%)" }}>
+      <div className="flex flex-col items-center gap-4 mt-8">
+        <div className="w-28 h-28 rounded-full bg-gradient-to-br from-blue-600 to-cyan-500 flex items-center justify-center shadow-[0_0_60px_rgba(0,180,230,0.4)]">
+          <span className="text-4xl font-golos font-black text-white">{session.peerName[0]}</span>
+        </div>
+        <div className="text-xl font-golos font-bold text-white">{session.peerName}</div>
+        <div className="text-sm text-cyan-300">
+          {session.status === "ringing"
+            ? (session.direction === "outgoing" ? "Вызов..." : "Входящий звонок")
+            : fmt(elapsed)}
+        </div>
+      </div>
+
+      <div className="flex flex-col items-center gap-8 w-full">
+        <div className="flex justify-center gap-8">
+          <button onClick={toggleMute}
+            className={`flex flex-col items-center gap-2 p-4 rounded-full transition-all ${muted ? "bg-red-500/30 text-red-300" : "bg-white/10 text-white"}`}>
+            <Icon name={muted ? "MicOff" : "Mic"} size={24} />
+            <span className="text-xs">{muted ? "Выкл" : "Микр"}</span>
+          </button>
+          <button onClick={() => setSpeakerOn(s => !s)}
+            className={`flex flex-col items-center gap-2 p-4 rounded-full transition-all ${speakerOn ? "bg-white/10 text-white" : "bg-white/5 text-muted-foreground"}`}>
+            <Icon name={speakerOn ? "Volume2" : "VolumeX"} size={24} />
+            <span className="text-xs">Динамик</span>
+          </button>
+        </div>
+        <button onClick={endCall}
+          className="w-20 h-20 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center shadow-[0_0_30px_rgba(239,68,68,0.5)] transition-all active:scale-95">
+          <Icon name="PhoneOff" size={32} className="text-white" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function IncomingCallBanner({ session, onAccept, onDecline }: { session: CallSession; onAccept: () => void; onDecline: () => void }) {
+  return (
+    <div className="fixed top-4 left-0 right-0 z-50 flex justify-center px-4 animate-fade-in">
+      <div className="w-full max-w-md glass border border-white/10 rounded-2xl px-4 py-3 shadow-2xl flex items-center gap-3">
+        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-600 to-cyan-500 flex items-center justify-center flex-shrink-0">
+          <span className="font-golos font-bold text-white text-sm">{session.peerName[0]}</span>
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="font-golos font-semibold text-sm text-foreground truncate">{session.peerName}</div>
+          <div className="text-xs text-cyan-400">Входящий звонок</div>
+        </div>
+        <button onClick={onDecline} className="p-2.5 rounded-full bg-red-500/20 hover:bg-red-500/40 transition-colors">
+          <Icon name="PhoneOff" size={18} className="text-red-400" />
+        </button>
+        <button onClick={onAccept} className="p-2.5 rounded-full bg-green-500/20 hover:bg-green-500/40 transition-colors">
+          <Icon name="Phone" size={18} className="text-green-400" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CallsTab({ token, onCall }: { token: string; onCall: (userId: number, userName: string) => void }) {
+  const [calls, setCalls] = useState<{ id: number; caller_id: number; callee_id: number; status: string; duration: string | null; type: string; caller_name: string; callee_name: string }[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`${CALLS_URL}/history`, { headers: apiHeaders(token) })
+      .then(r => r.json())
+      .then(d => { if (d.calls) setCalls(d.calls); })
+      .finally(() => setLoading(false));
+  }, [token]);
+
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 pt-4 pb-3">
         <h1 className="text-2xl font-golos font-black text-gradient mb-4">Звонки</h1>
       </div>
       <div className="flex-1 overflow-y-auto">
-        {MOCK_CALLS.map((call, i) => {
+        {loading && <div className="text-center py-8 text-sm text-muted-foreground">Загрузка...</div>}
+        {!loading && calls.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-48 gap-3 text-muted-foreground">
+            <Icon name="Phone" size={36} className="opacity-30" />
+            <p className="text-sm">Звонков пока нет</p>
+          </div>
+        )}
+        {calls.map((call, i) => {
           const cfg = {
             incoming: { icon: "PhoneIncoming", color: "text-green-400", label: "Входящий" },
             outgoing: { icon: "PhoneOutgoing", color: "text-cyan-400", label: "Исходящий" },
             missed: { icon: "PhoneMissed", color: "text-red-400", label: "Пропущенный" },
-          }[call.type];
+            declined: { icon: "PhoneMissed", color: "text-red-400", label: "Отклонён" },
+          }[call.type] ?? { icon: "Phone", color: "text-muted-foreground", label: call.type };
+          const peerName = call.type === "outgoing" ? call.callee_name : call.caller_name;
+          const peerId = call.type === "outgoing" ? call.callee_id : call.caller_id;
           return (
             <div key={call.id} className="flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-all animate-fade-in"
-              style={{ animationDelay: `${i * 0.05}s` }}>
-              <AvatarEl name={call.name} size="md" />
+              style={{ animationDelay: `${i * 0.04}s` }}>
+              <AvatarEl name={peerName} size="md" />
               <div className="flex-1">
-                <div className="font-golos font-semibold text-foreground text-sm">{call.name}</div>
+                <div className="font-golos font-semibold text-foreground text-sm">{peerName}</div>
                 <div className="flex items-center gap-1.5 mt-0.5">
                   <Icon name={cfg.icon} size={12} className={cfg.color} />
                   <span className={`text-xs ${cfg.color}`}>{cfg.label}</span>
-                  {call.callType === "video" && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-400/10 text-cyan-400 border border-cyan-400/20">видео</span>
-                  )}
                   {call.duration && <span className="text-xs text-muted-foreground">· {call.duration}</span>}
                 </div>
               </div>
-              <button className="p-2 hover:bg-white/10 rounded-full transition-colors">
-                <Icon name={call.callType === "video" ? "Video" : "Phone"} size={16} className="text-sky-400" />
+              <button onClick={() => onCall(peerId, peerName)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+                <Icon name="Phone" size={16} className="text-sky-400" />
               </button>
             </div>
           );
@@ -2376,7 +2551,7 @@ function StatusTab({ user }: { user: User }) {
   );
 }
 
-function ContactsTab({ token }: { token: string }) {
+function ContactsTab({ token, onCall }: { token: string; onCall: (userId: number, userName: string) => void }) {
   const [users, setUsers] = useState<{ id: number; name: string; phone: string; status: string }[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
@@ -2427,7 +2602,7 @@ function ContactsTab({ token }: { token: string }) {
               <button className="p-2 hover:bg-white/10 rounded-full transition-colors">
                 <Icon name="MessageCircle" size={16} className="text-sky-400" />
               </button>
-              <button className="p-2 hover:bg-white/10 rounded-full transition-colors">
+              <button onClick={() => onCall(u.id, u.name)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
                 <Icon name="Phone" size={16} className="text-cyan-400" />
               </button>
             </div>
@@ -2819,6 +2994,8 @@ export default function App() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const prevUnreadRef = useRef<Record<number, number>>();
   prevUnreadRef.current = prevUnreadRef.current ?? {};
+  const [activeCall, setActiveCall] = useState<CallSession | null>(null);
+  const [incomingCall, setIncomingCall] = useState<CallSession | null>(null);
 
   useEffect(() => {
     if (!token) { setAuthChecked(true); return; }
@@ -2959,6 +3136,48 @@ export default function App() {
     setTab("chats");
   }
 
+  async function startCall(calleeId: number, calleeName: string) {
+    if (!token) return;
+    const res = await fetch(`${CALLS_URL}/initiate`, {
+      method: "POST", headers: apiHeaders(token),
+      body: JSON.stringify({ callee_id: calleeId }),
+    });
+    const data = await res.json();
+    if (data.call_id) {
+      setActiveCall({ callId: data.call_id, peerId: calleeId, peerName: calleeName, direction: "outgoing", status: "ringing" });
+      setIncomingCall(null);
+    }
+  }
+
+  async function acceptCall(session: CallSession) {
+    if (!token) return;
+    await fetch(`${CALLS_URL}/answer`, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ call_id: session.callId }) });
+    setActiveCall({ ...session, status: "active" });
+    setIncomingCall(null);
+  }
+
+  async function declineCall(session: CallSession) {
+    if (!token) return;
+    await fetch(`${CALLS_URL}/decline`, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ call_id: session.callId }) });
+    setIncomingCall(null);
+  }
+
+  useEffect(() => {
+    if (!token || !user) return;
+    const poll = setInterval(async () => {
+      if (activeCall) return;
+      const res = await fetch(`${CALLS_URL}/incoming`, { headers: apiHeaders(token) }).catch(() => null);
+      if (!res) return;
+      const data = await res.json();
+      if (data.call) {
+        setIncomingCall({ callId: data.call.id, peerId: data.call.caller_id, peerName: data.call.caller_name, direction: "incoming", status: "ringing" });
+      } else {
+        setIncomingCall(null);
+      }
+    }, 3000);
+    return () => clearInterval(poll);
+  }, [token, user, activeCall]);
+
   const unreadCount = chatsForBadge.reduce((a, c) => a + (c.unread || 0), 0);
 
   if (!authChecked) {
@@ -3000,13 +3219,13 @@ export default function App() {
   }
 
   const tabs: Record<Tab, React.ReactNode> = {
-    chats: <ChatsTab token={token} currentUserId={user.id} onMessageRead={(chatId: number) => {
+    chats: <ChatsTab token={token} currentUserId={user.id} onCall={startCall} onMessageRead={(chatId: number) => {
       setChatsForBadge(prev => prev.map(c =>
         c.id === chatId ? { ...c, unread: Math.max(0, c.unread - 1) } : c
       ));
     }} />,
-    contacts: <ContactsTab token={token} />,
-    calls: <CallsTab />,
+    contacts: <ContactsTab token={token} onCall={startCall} />,
+    calls: <CallsTab token={token} onCall={startCall} />,
     status: <StatusTab user={user} />,
     profile: <ProfileTab user={user} token={token} onLogout={handleLogout} onUserUpdate={u => { setUser(u); localStorage.setItem("pulse_user", JSON.stringify(u)); }} onDeleteAccount={handleLogout} />,
     settings: <SettingsTab onLogout={handleLogout} onTestSound={playSound} />,
@@ -3030,6 +3249,16 @@ export default function App() {
       </div>
       <div className="flex-1 overflow-hidden relative z-10">{tabs[tab]}</div>
       <BottomNav active={tab} onChange={setTab} unreadCount={unreadCount} />
+      {incomingCall && !activeCall && (
+        <IncomingCallBanner
+          session={incomingCall}
+          onAccept={() => acceptCall(incomingCall)}
+          onDecline={() => declineCall(incomingCall)}
+        />
+      )}
+      {activeCall && (
+        <CallScreen session={activeCall} token={token} onEnd={() => setActiveCall(null)} />
+      )}
     </div>
   );
 }

@@ -107,12 +107,17 @@ def handler(event: dict, context) -> dict:
                                    JOIN {SCHEMA}.users u2 ON u2.id = cm2.user_id
                                    WHERE cm2.chat_id = c.id AND cm2.user_id != %s LIMIT 1)
                         END AS peer_last_seen,
-                        cm.pinned
+                        cm.pinned,
+                        CASE WHEN c.is_group THEN NULL
+                             ELSE (SELECT u2.id FROM {SCHEMA}.chat_members cm2
+                                   JOIN {SCHEMA}.users u2 ON u2.id = cm2.user_id
+                                   WHERE cm2.chat_id = c.id AND cm2.user_id != %s LIMIT 1)
+                        END AS peer_id
                     FROM {SCHEMA}.chats c
                     JOIN {SCHEMA}.chat_members cm ON cm.chat_id = c.id AND cm.user_id = %s
                     WHERE cm.hidden = FALSE
                     ORDER BY cm.pinned DESC, last_time DESC NULLS LAST
-                """, (user_id, user_id, user_id, user_id))
+                """, (user_id, user_id, user_id, user_id, user_id))
                 rows = cur.fetchall()
                 from datetime import datetime, timezone, timedelta
                 now = datetime.now(timezone.utc)
@@ -132,6 +137,7 @@ def handler(event: dict, context) -> dict:
                         "peer_online": bool(is_online),
                         "peer_last_seen": peer_last_seen.isoformat() if peer_last_seen else None,
                         "pinned": bool(r[9]),
+                        "peer_id": r[10],
                     })
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"chats": chats})}
 
