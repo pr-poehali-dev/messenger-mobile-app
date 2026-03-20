@@ -110,7 +110,7 @@ function AvatarEl({ name, size = "md", status }: {
   return (
     <div className="relative flex-shrink-0">
       <div className={`rounded-full bg-gradient-to-br ${getAvatarColor(name)} flex items-center justify-center font-golos font-bold text-white ${sizes[size]}`}>
-        {name.slice(0, 2)}
+        {(name || "?").slice(0, 2).toUpperCase()}
       </div>
       {status && (
         <div className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-background
@@ -289,8 +289,8 @@ function BottomNav({ active, onChange, unreadCount }: {
 
 // ─── Chat Screen ──────────────────────────────────────────────────────────────
 
-function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRead, initialMsgId, onCall }: {
-  chat: Chat; token: string; currentUserId: number; onBack: () => void; allChats: Chat[]; onMessageRead?: () => void; initialMsgId?: number; onCall?: (userId: number, userName: string) => void;
+function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRead, initialMsgId, onCall, onChatUpdate }: {
+  chat: Chat; token: string; currentUserId: number; onBack: () => void; allChats: Chat[]; onMessageRead?: () => void; initialMsgId?: number; onCall?: (userId: number, userName: string) => void; onChatUpdate?: (updated: Partial<Chat>) => void;
 }) {
   const [text, setText] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -449,28 +449,28 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     return d.toLocaleDateString("ru", { day: "numeric", month: "long", year: d.getFullYear() !== today.getFullYear() ? "numeric" : undefined });
   }
 
+  const messagesRef = useRef<Message[]>([]);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+
   const loadOlder = useCallback(async () => {
     if (loadingMore || !hasMore) return;
     setLoadingMore(true);
     const container = scrollContainerRef.current;
     const prevScrollHeight = container?.scrollHeight ?? 0;
     try {
-      const firstId = messages[0]?.id;
+      const firstId = messagesRef.current[0]?.id;
       if (!firstId || String(firstId).startsWith("opt-")) return;
       const res = await fetch(`${CHATS_URL}/messages?chat_id=${chat.id}&before_id=${firstId}`, { headers: apiHeaders(token) });
       const data = await res.json();
       if (data.has_more !== undefined) setHasMore(data.has_more);
       if (data.messages?.length) {
         setMessages(prev => [...data.messages, ...prev]);
-        // restore scroll position after prepend
         requestAnimationFrame(() => {
-          if (container) {
-            container.scrollTop = container.scrollHeight - prevScrollHeight;
-          }
+          if (container) container.scrollTop = container.scrollHeight - prevScrollHeight;
         });
       }
     } finally { setLoadingMore(false); }
-  }, [chat.id, token, hasMore, loadingMore, messages]);
+  }, [chat.id, token, hasMore, loadingMore]);
 
   useEffect(() => { loadMessages(); }, [loadMessages]);
 
@@ -593,9 +593,11 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
       });
       const data = await res.json();
       if (data.ok) {
-        chat.name = data.name;
-        if (data.description !== undefined) chat.description = data.description;
-        if (data.is_public !== undefined) chat.is_public = data.is_public;
+        onChatUpdate?.({
+          name: data.name,
+          description: data.description,
+          is_public: data.is_public,
+        });
         setEditingChat(false);
       }
     } finally { setEditSaving(false); }
@@ -1699,7 +1701,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
           </div>
         )}
 
-        {chat.is_channel && !chat.can_post
+        {chat.is_channel && !myCanPost
           ? <div className="flex items-center justify-center gap-2 py-3 text-muted-foreground">
               <Icon name="Radio" size={14} className="text-purple-400" />
               <span className="text-sm">Только администраторы могут писать в канале</span>
@@ -1979,7 +1981,11 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: stri
   if (activeChat) {
     return <ChatScreen chat={activeChat} token={token} currentUserId={currentUserId}
       onBack={() => { setActiveChat(null); loadChats(); setInitialMsgId(undefined); }} allChats={chats}
-      onMessageRead={() => onMessageRead(activeChat.id)} initialMsgId={initialMsgId} onCall={onCall} />;
+      onMessageRead={() => onMessageRead(activeChat.id)} initialMsgId={initialMsgId} onCall={onCall}
+      onChatUpdate={(updated) => {
+        setActiveChat(prev => prev ? { ...prev, ...updated } : prev);
+        setChats(prev => prev.map(c => c.id === activeChat.id ? { ...c, ...updated } : c));
+      }} />;
   }
 
   return (
@@ -2669,6 +2675,8 @@ function CallScreen({ session, token, onEnd }: { session: CallSession; token: st
     await fetch(`${CALLS_URL}/end`, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ call_id: session.callId }) }).catch(() => {});
     onEnd();
   }
+
+  useEffect(() => { callStatusRef.current = callStatus; }, [callStatus]);
 
   useEffect(() => {
     if (callStatus !== "active") return;
