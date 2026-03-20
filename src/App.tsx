@@ -297,8 +297,16 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
   const [loading, setLoading] = useState(true);
   const [typists, setTypists] = useState<string[]>([]);
   const [showMembers, setShowMembers] = useState(false);
-  const [members, setMembers] = useState<{ id: number; name: string; status: string; role: string; is_me: boolean }[]>([]);
+  const [members, setMembers] = useState<{ id: number; name: string; status: string; role: string; can_post: boolean; is_me: boolean }[]>([]);
   const [membersLoading, setMembersLoading] = useState(false);
+  const [editingChat, setEditingChat] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editDesc, setEditDesc] = useState("");
+  const [editPublic, setEditPublic] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
+  const [addMemberSearch, setAddMemberSearch] = useState("");
+  const [addMemberResults, setAddMemberResults] = useState<{ id: number; name: string; phone: string; status: string }[]>([]);
+  const [addMemberLoading, setAddMemberLoading] = useState(false);
   const [leftGroup, setLeftGroup] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -574,6 +582,55 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
   }
 
   const myRole = members.find(m => m.is_me)?.role ?? chat.my_role;
+  const myCanPost = members.find(m => m.is_me)?.can_post ?? chat.can_post ?? false;
+
+  async function saveEditChat() {
+    setEditSaving(true);
+    try {
+      const res = await fetch(`${CHATS_URL}/update-chat`, {
+        method: "POST", headers: apiHeaders(token),
+        body: JSON.stringify({ chat_id: chat.id, name: editName, description: editDesc, is_public: editPublic }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        chat.name = data.name;
+        if (data.description !== undefined) chat.description = data.description;
+        if (data.is_public !== undefined) chat.is_public = data.is_public;
+        setEditingChat(false);
+      }
+    } finally { setEditSaving(false); }
+  }
+
+  async function setMemberRole(memberId: number, role: string, canPost?: boolean) {
+    await fetch(`${CHATS_URL}/set-role`, {
+      method: "POST", headers: apiHeaders(token),
+      body: JSON.stringify({ chat_id: chat.id, user_id: memberId, role, can_post: canPost }),
+    });
+    setMembers(prev => prev.map(m => m.id === memberId ? { ...m, role, can_post: canPost ?? m.can_post } : m));
+  }
+
+  async function searchAddMember(q: string) {
+    setAddMemberSearch(q);
+    if (!q.trim()) { setAddMemberResults([]); return; }
+    setAddMemberLoading(true);
+    try {
+      const res = await fetch(`${CHATS_URL}/users?q=${encodeURIComponent(q)}`, { headers: apiHeaders(token) });
+      const data = await res.json();
+      if (data.users) {
+        const memberIds = new Set(members.map(m => m.id));
+        setAddMemberResults(data.users.filter((u: { id: number }) => !memberIds.has(u.id)));
+      }
+    } finally { setAddMemberLoading(false); }
+  }
+
+  async function addMember(userId: number, userName: string) {
+    await fetch(`${CHATS_URL}/add-members`, {
+      method: "POST", headers: apiHeaders(token),
+      body: JSON.stringify({ chat_id: chat.id, members: [userId] }),
+    });
+    setMembers(prev => [...prev, { id: userId, name: userName, status: "offline", role: "member", can_post: !chat.is_channel, is_me: false }]);
+    setAddMemberSearch(""); setAddMemberResults([]);
+  }
 
   // Scroll to bottom only when at bottom or new own message
   useEffect(() => {
@@ -955,19 +1012,27 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
             <div className="flex-1 min-w-0 text-left">
               <div className="font-golos font-semibold text-foreground text-sm truncate">{chat.name}</div>
               <div className="text-xs flex items-center gap-1">
-                {chat.is_group
-                  ? <span className="text-muted-foreground">{chat.member_count ?? 0} участников · нажмите для управления</span>
-                  : peerStatus.online
-                    ? <><span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block animate-pulse" /><span className="text-green-400">в сети</span></>
-                    : <span className="text-muted-foreground">был(а) {formatLastSeen(peerStatus.last_seen)}</span>
+                {chat.is_channel
+                  ? <><Icon name="Radio" size={10} className="text-purple-400" />
+                      <span className="text-purple-300">{chat.member_count ?? 0} {chat.is_public ? "· публичный" : "· приватный"}</span></>
+                  : chat.is_group
+                    ? <span className="text-muted-foreground">{chat.member_count ?? 0} участников · нажмите для управления</span>
+                    : peerStatus.online
+                      ? <><span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block animate-pulse" /><span className="text-green-400">в сети</span></>
+                      : <span className="text-muted-foreground">был(а) {formatLastSeen(peerStatus.last_seen)}</span>
                 }
               </div>
+              {chat.is_channel && chat.description && !showMembers && (
+                <div className="text-[10px] text-muted-foreground truncate mt-0.5">{chat.description}</div>
+              )}
             </div>
           </button>
           {chat.is_group && (
             <button onClick={toggleMembers}
-              className={`p-2 rounded-full transition-colors ${showMembers ? "bg-blue-500/20 text-sky-400" : "hover:bg-white/10 text-muted-foreground"}`}>
-              <Icon name="Users" size={18} />
+              className={`p-2 rounded-full transition-colors ${showMembers
+                ? chat.is_channel ? "bg-purple-500/20 text-purple-400" : "bg-blue-500/20 text-sky-400"
+                : "hover:bg-white/10 text-muted-foreground"}`}>
+              <Icon name={chat.is_channel ? "Radio" : "Users"} size={18} />
             </button>
           )}
           <button onClick={openSearch}
@@ -985,52 +1050,165 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
           )}
         </div>
 
-        {/* Members panel */}
+        {/* Members / Channel management panel */}
         {chat.is_group && showMembers && (
-          <div className="mt-3 animate-fade-in">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold text-sky-400 uppercase tracking-wide">Участники</span>
-              <button onClick={leaveGroup}
-                className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 transition-colors px-2 py-1 rounded-lg hover:bg-red-500/10">
-                <Icon name="LogOut" size={12} />
-                Покинуть
-              </button>
-            </div>
-            {membersLoading ? (
-              <div className="flex justify-center py-3">
-                <div className="w-5 h-5 border-2 border-sky-500/30 border-t-sky-500 rounded-full animate-spin" />
-              </div>
-            ) : (
-              <div className="space-y-1 max-h-48 overflow-y-auto">
-                {members.map(m => {
-                  const roleColors: Record<string, string> = {
-                    admin: "text-yellow-400 bg-yellow-400/10 border-yellow-400/20",
-                    moderator: "text-cyan-400 bg-cyan-400/10 border-cyan-400/20",
-                    member: "text-muted-foreground bg-white/5 border-white/10",
-                  };
-                  const roleLabels: Record<string, string> = { admin: "Админ", moderator: "Модер", member: "Участник" };
-                  return (
-                    <div key={m.id} className="flex items-center gap-2.5 p-2 rounded-xl hover:bg-white/5 transition-all">
-                      <AvatarEl name={m.name} size="xs" status={m.status} />
-                      <div className="flex-1 min-w-0">
-                        <span className="text-sm font-medium text-foreground truncate">
-                          {m.is_me ? "Вы" : m.name}
-                        </span>
-                      </div>
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${roleColors[m.role] ?? roleColors.member}`}>
-                        {roleLabels[m.role] ?? m.role}
-                      </span>
-                      {!m.is_me && myRole === "admin" && (
-                        <button onClick={() => kickMember(m.id, m.name)}
-                          className="p-1 rounded-full hover:bg-red-500/20 transition-colors flex-shrink-0 group">
-                          <Icon name="UserMinus" size={13} className="text-muted-foreground group-hover:text-red-400 transition-colors" />
-                        </button>
-                      )}
+          <div className="mt-3 animate-fade-in space-y-3">
+
+            {/* Настройки канала/группы для админа */}
+            {myRole === "admin" && (
+              <div className="rounded-xl border border-white/10 overflow-hidden">
+                {!editingChat ? (
+                  <button onClick={() => { setEditName(chat.name); setEditDesc(chat.description ?? ""); setEditPublic(chat.is_public ?? false); setEditingChat(true); }}
+                    className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-white/5 transition-colors text-left">
+                    <Icon name={chat.is_channel ? "Radio" : "Settings"} size={14} className={chat.is_channel ? "text-purple-400" : "text-sky-400"} />
+                    <span className="text-xs font-semibold text-foreground flex-1">
+                      {chat.is_channel ? "Настройки канала" : "Настройки группы"}
+                    </span>
+                    <Icon name="ChevronRight" size={14} className="text-muted-foreground" />
+                  </button>
+                ) : (
+                  <div className="p-3 space-y-2">
+                    <p className="text-[11px] font-semibold text-sky-400 uppercase tracking-wide mb-2">
+                      {chat.is_channel ? "Настройки канала" : "Настройки группы"}
+                    </p>
+                    <input value={editName} onChange={e => setEditName(e.target.value)}
+                      placeholder="Название..."
+                      className="w-full bg-secondary/60 border border-white/10 rounded-xl px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 transition-all" />
+                    <textarea value={editDesc} onChange={e => setEditDesc(e.target.value)}
+                      placeholder="Описание..." rows={2}
+                      className="w-full bg-secondary/60 border border-white/10 rounded-xl px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 transition-all resize-none" />
+                    {chat.is_channel && (
+                      <button onClick={() => setEditPublic(p => !p)}
+                        className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl border text-xs transition-all ${editPublic ? "bg-purple-500/15 border-purple-500/30 text-purple-300" : "bg-secondary/40 border-white/10 text-muted-foreground"}`}>
+                        <Icon name={editPublic ? "Globe" : "Lock"} size={13} />
+                        {editPublic ? "Публичный канал" : "Приватный канал"}
+                      </button>
+                    )}
+                    <div className="flex gap-2">
+                      <button onClick={() => setEditingChat(false)}
+                        className="flex-1 py-2 rounded-xl bg-secondary/60 text-xs text-muted-foreground hover:bg-white/10 transition-colors">
+                        Отмена
+                      </button>
+                      <button onClick={saveEditChat} disabled={editSaving || !editName.trim()}
+                        className={`flex-1 py-2 rounded-xl text-xs text-white font-semibold transition-all disabled:opacity-50 flex items-center justify-center gap-1.5
+                          ${chat.is_channel ? "bg-gradient-to-r from-purple-600 to-violet-700" : "bg-gradient-to-r from-blue-600 to-blue-700"}`}>
+                        {editSaving ? <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Icon name="Check" size={12} />}
+                        Сохранить
+                      </button>
                     </div>
-                  );
-                })}
+                  </div>
+                )}
               </div>
             )}
+
+            {/* Добавить участника (только для админа) */}
+            {myRole === "admin" && (
+              <div className="rounded-xl border border-white/10 overflow-hidden">
+                <div className="relative">
+                  <Icon name="UserPlus" size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                  <input value={addMemberSearch} onChange={e => searchAddMember(e.target.value)}
+                    placeholder={chat.is_channel ? "Добавить подписчика..." : "Добавить участника..."}
+                    className="w-full bg-transparent pl-8 pr-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none" />
+                  {addMemberLoading && <div className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 border-2 border-sky-500/30 border-t-sky-500 rounded-full animate-spin" />}
+                </div>
+                {addMemberResults.length > 0 && (
+                  <div className="border-t border-white/5 divide-y divide-white/5 max-h-40 overflow-y-auto">
+                    {addMemberResults.map(u => (
+                      <button key={u.id} onClick={() => addMember(u.id, u.name)}
+                        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/5 transition-colors text-left">
+                        <AvatarEl name={u.name} size="xs" status={u.status} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium text-foreground truncate">{u.name}</p>
+                          <p className="text-[10px] text-muted-foreground">{u.phone}</p>
+                        </div>
+                        <Icon name="Plus" size={13} className="text-sky-400 flex-shrink-0" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Список участников */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-semibold text-sky-400 uppercase tracking-wide">
+                  {chat.is_channel ? "Подписчики" : "Участники"} · {members.length}
+                </span>
+                {!chat.is_channel && (
+                  <button onClick={leaveGroup}
+                    className="flex items-center gap-1 text-[10px] text-red-400 hover:text-red-300 transition-colors px-2 py-1 rounded-lg hover:bg-red-500/10">
+                    <Icon name="LogOut" size={11} />
+                    Покинуть
+                  </button>
+                )}
+              </div>
+              {membersLoading ? (
+                <div className="flex justify-center py-3">
+                  <div className="w-5 h-5 border-2 border-sky-500/30 border-t-sky-500 rounded-full animate-spin" />
+                </div>
+              ) : (
+                <div className="space-y-0.5 max-h-52 overflow-y-auto">
+                  {members.map(m => {
+                    const roleColors: Record<string, string> = {
+                      admin: "text-yellow-400 bg-yellow-400/10 border-yellow-400/20",
+                      moderator: "text-cyan-400 bg-cyan-400/10 border-cyan-400/20",
+                      member: "text-muted-foreground bg-white/5 border-white/10",
+                    };
+                    const roleLabels: Record<string, string> = {
+                      admin: chat.is_channel ? "Автор" : "Админ",
+                      moderator: "Модер",
+                      member: chat.is_channel ? "Читатель" : "Участник",
+                    };
+                    return (
+                      <div key={m.id} className="flex items-center gap-2 p-2 rounded-xl hover:bg-white/5 transition-all group">
+                        <AvatarEl name={m.name} size="xs" status={m.status} />
+                        <div className="flex-1 min-w-0">
+                          <span className="text-sm font-medium text-foreground truncate block">{m.is_me ? "Вы" : m.name}</span>
+                          {chat.is_channel && m.can_post && !m.is_me && (
+                            <span className="text-[10px] text-purple-400">может публиковать</span>
+                          )}
+                        </div>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full border flex-shrink-0 ${roleColors[m.role] ?? roleColors.member}`}>
+                          {roleLabels[m.role] ?? m.role}
+                        </span>
+                        {!m.is_me && myRole === "admin" && (
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                            {/* Повысить/понизить */}
+                            {m.role !== "admin" && (
+                              <button onClick={() => setMemberRole(m.id, "admin", chat.is_channel ? true : undefined)}
+                                title="Сделать администратором"
+                                className="p-1 rounded-full hover:bg-yellow-500/20 transition-colors">
+                                <Icon name="ShieldCheck" size={12} className="text-yellow-400" />
+                              </button>
+                            )}
+                            {chat.is_channel && (
+                              <button onClick={() => setMemberRole(m.id, m.role, !m.can_post)}
+                                title={m.can_post ? "Запретить публикации" : "Разрешить публикации"}
+                                className="p-1 rounded-full hover:bg-purple-500/20 transition-colors">
+                                <Icon name={m.can_post ? "PenOff" : "Pen"} size={12} className="text-purple-400" />
+                              </button>
+                            )}
+                            {m.role !== "member" && (
+                              <button onClick={() => setMemberRole(m.id, "member", false)}
+                                title="Разжаловать"
+                                className="p-1 rounded-full hover:bg-white/10 transition-colors">
+                                <Icon name="ShieldMinus" size={12} className="text-muted-foreground" />
+                              </button>
+                            )}
+                            <button onClick={() => kickMember(m.id, m.name)}
+                              title="Удалить"
+                              className="p-1 rounded-full hover:bg-red-500/20 transition-colors">
+                              <Icon name="UserMinus" size={12} className="text-muted-foreground hover:text-red-400 transition-colors" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

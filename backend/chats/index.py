@@ -728,14 +728,14 @@ def handler(event: dict, context) -> dict:
                 if not cur.fetchone():
                     return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Нет доступа"})}
                 cur.execute(f"""
-                    SELECT u.id, u.name, u.status, cm.role
+                    SELECT u.id, u.name, u.status, cm.role, cm.can_post
                     FROM {SCHEMA}.chat_members cm
                     JOIN {SCHEMA}.users u ON u.id = cm.user_id
                     WHERE cm.chat_id = %s
                     ORDER BY cm.role DESC, u.name
                 """, (chat_id,))
                 rows = cur.fetchall()
-            members = [{"id": r[0], "name": r[1], "status": r[2], "role": r[3], "is_me": r[0] == user_id} for r in rows]
+            members = [{"id": r[0], "name": r[1], "status": r[2], "role": r[3], "can_post": bool(r[4]), "is_me": r[0] == user_id} for r in rows]
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"members": members})}
 
         # POST /leave — покинуть группу
@@ -783,6 +783,84 @@ def handler(event: dict, context) -> dict:
                 )
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
+
+        # POST /update-chat — обновить название, описание, публичность (только admin)
+        if method == "POST" and "update-chat" in path:
+            body = json.loads(event.get("body") or "{}")
+            chat_id = body.get("chat_id")
+            if not chat_id:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id обязателен"})}
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT role FROM {SCHEMA}.chat_members WHERE chat_id = %s AND user_id = %s", (chat_id, user_id))
+                row = cur.fetchone()
+                if not row or row[0] != "admin":
+                    return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Только администратор"})}
+                fields, vals = [], []
+                if "name" in body and body["name"] and body["name"].strip():
+                    fields.append("name = %s"); vals.append(body["name"].strip()[:100])
+                if "description" in body:
+                    fields.append("description = %s"); vals.append((body["description"] or "").strip()[:500] or None)
+                if "is_public" in body:
+                    fields.append("is_public = %s"); vals.append(bool(body["is_public"]))
+                if not fields:
+                    return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Нечего обновлять"})}
+                vals.append(chat_id)
+                cur.execute(f"UPDATE {SCHEMA}.chats SET {', '.join(fields)} WHERE id = %s", vals)
+                cur.execute(f"SELECT name, description, is_public, is_channel FROM {SCHEMA}.chats WHERE id = %s", (chat_id,))
+                r = cur.fetchone()
+            conn.commit()
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({
+                "ok": True, "name": r[0], "description": r[1], "is_public": r[2], "is_channel": r[3]
+            })}
+
+        # POST /set-role — назначить/изменить роль участника (только admin)
+        if method == "POST" and "set-role" in path:
+            body = json.loads(event.get("body") or "{}")
+            chat_id = body.get("chat_id")
+            target_id = body.get("user_id")
+            new_role = body.get("role")
+            can_post = body.get("can_post")
+            if not chat_id or not target_id or not new_role:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id, user_id, role обязательны"})}
+            if new_role not in ("admin", "moderator", "member"):
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Недопустимая роль"})}
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT role FROM {SCHEMA}.chat_members WHERE chat_id = %s AND user_id = %s", (chat_id, user_id))
+                row = cur.fetchone()
+                if not row or row[0] != "admin":
+                    return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Только администратор"})}
+                if can_post is not None:
+                    cur.execute(f"UPDATE {SCHEMA}.chat_members SET role = %s, can_post = %s WHERE chat_id = %s AND user_id = %s",
+                                (new_role, bool(can_post), chat_id, target_id))
+                else:
+                    cur.execute(f"UPDATE {SCHEMA}.chat_members SET role = %s WHERE chat_id = %s AND user_id = %s",
+                                (new_role, chat_id, target_id))
+            conn.commit()
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
+
+        # POST /add-members — добавить участников в группу/канал (только admin)
+        if method == "POST" and "add-members" in path:
+            body = json.loads(event.get("body") or "{}")
+            chat_id = body.get("chat_id")
+            new_members = body.get("members", [])
+            if not chat_id or not new_members:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id и members обязательны"})}
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT role FROM {SCHEMA}.chat_members WHERE chat_id = %s AND user_id = %s", (chat_id, user_id))
+                row = cur.fetchone()
+                if not row or row[0] != "admin":
+                    return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Только администратор"})}
+                cur.execute(f"SELECT is_channel FROM {SCHEMA}.chats WHERE id = %s", (chat_id,))
+                is_channel = (cur.fetchone() or [False])[0]
+                added = 0
+                for mid in new_members:
+                    if mid == user_id: continue
+                    cur.execute(f"""INSERT INTO {SCHEMA}.chat_members (chat_id, user_id, role, can_post)
+                        VALUES (%s, %s, 'member', %s) ON CONFLICT DO NOTHING""",
+                        (chat_id, mid, not is_channel))
+                    added += 1
+            conn.commit()
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "added": added})}
 
         # GET /users — поиск пользователей для добавления
         if method == "GET" and "users" in path:
