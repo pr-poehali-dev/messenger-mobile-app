@@ -108,7 +108,8 @@ def handler(event: dict, context) -> dict:
                         c.avatar_url,
                         COALESCE(c.is_public, FALSE) AS is_public,
                         COALESCE(cm.can_post, FALSE) AS can_post,
-                        COALESCE(cm.muted, FALSE) AS muted
+                        COALESCE(cm.muted, FALSE) AS muted,
+                        cm.muted_until
                     FROM {SCHEMA}.chats c
                     JOIN {SCHEMA}.chat_members cm ON cm.chat_id = c.id AND cm.user_id = %s AND cm.hidden = FALSE
                     LEFT JOIN LATERAL (
@@ -138,6 +139,12 @@ def handler(event: dict, context) -> dict:
                 for r in rows:
                     peer_last_seen = r[8]
                     is_online = peer_last_seen and (now - peer_last_seen) < timedelta(minutes=2)
+                    muted_raw = bool(r[16])
+                    muted_until = r[17]
+                    # Если muted_until истёк — считаем незаглушённым
+                    if muted_until and muted_until < now:
+                        muted_raw = False
+                        muted_until = None
                     chats.append({
                         "id": r[0],
                         "is_group": r[1],
@@ -156,7 +163,8 @@ def handler(event: dict, context) -> dict:
                         "avatar_url": r[13],
                         "is_public": bool(r[14]),
                         "can_post": bool(r[15]),
-                        "muted": bool(r[16]),
+                        "muted": muted_raw,
+                        "muted_until": muted_until.isoformat() if muted_until else None,
                     })
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"chats": chats})}
 
@@ -383,7 +391,8 @@ def handler(event: dict, context) -> dict:
                             SELECT ps.endpoint, ps.p256dh, ps.auth
                             FROM {SCHEMA}.push_subscriptions ps
                             JOIN {SCHEMA}.chat_members cm ON cm.user_id = ps.user_id
-                            WHERE cm.chat_id = %s AND ps.user_id != %s AND COALESCE(cm.muted, FALSE) = FALSE
+                            WHERE cm.chat_id = %s AND ps.user_id != %s
+                              AND (COALESCE(cm.muted, FALSE) = FALSE OR (cm.muted_until IS NOT NULL AND cm.muted_until < NOW()))
                         """, (chat_id, user_id))
                         subs = cur.fetchall()
                     preview = (text or ("📎 Файл" if file_url else ""))[:80]
@@ -899,18 +908,24 @@ def handler(event: dict, context) -> dict:
 
         # POST /mute-chat — отключить / включить уведомления для чата
         if method == "POST" and "mute-chat" in path:
+            from datetime import datetime, timezone, timedelta
             body = json.loads(event.get("body") or "{}")
             chat_id = body.get("chat_id")
             mute = body.get("mute", True)
+            minutes = body.get("minutes")  # None = навсегда, число = на N минут
             if not chat_id:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id обязателен"})}
+            if mute and minutes is not None:
+                muted_until = datetime.now(timezone.utc) + timedelta(minutes=int(minutes))
+            else:
+                muted_until = None
             with conn.cursor() as cur:
                 cur.execute(f"""
-                    UPDATE {SCHEMA}.chat_members SET muted = %s
+                    UPDATE {SCHEMA}.chat_members SET muted = %s, muted_until = %s
                     WHERE chat_id = %s AND user_id = %s
-                """, (mute, chat_id, user_id))
+                """, (mute, muted_until, chat_id, user_id))
             conn.commit()
-            return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "muted": mute})}
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "muted": mute, "muted_until": muted_until.isoformat() if muted_until else None})}
 
         # POST /hide-chat — скрыть личный чат для себя (мягкое удаление)
         if method == "POST" and "hide-chat" in path:

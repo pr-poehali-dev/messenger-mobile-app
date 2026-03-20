@@ -67,6 +67,7 @@ interface Chat {
   online?: boolean;
   pinned?: boolean;
   muted?: boolean;
+  muted_until?: string | null;
   peer_online?: boolean;
   peer_last_seen?: string | null;
   peer_id?: number | null;
@@ -1879,6 +1880,7 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: stri
   const [channelPublic, setChannelPublic] = useState(false);
   const [groupCreating, setGroupCreating] = useState(false);
   const [contextChat, setContextChat] = useState<Chat | null>(null);
+  const [muteChat, setMuteChat] = useState<Chat | null>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [globalResults, setGlobalResults] = useState<{ msg_id: number; text: string; time: string | null; chat_id: number; chat_name: string; is_group: boolean; sender_name: string; is_out: boolean }[]>([]);
   const [globalSearching, setGlobalSearching] = useState(false);
@@ -1962,12 +1964,23 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: stri
     setContextChat(null);
   }
 
-  async function toggleMute(chat: Chat) {
-    const muted = !chat.muted;
-    setChats(prev => prev.map(c => c.id === chat.id ? { ...c, muted } : c));
+  async function applyMute(chat: Chat, minutes: number | null) {
+    const muted = true;
+    const muted_until = minutes ? new Date(Date.now() + minutes * 60000).toISOString() : null;
+    setChats(prev => prev.map(c => c.id === chat.id ? { ...c, muted, muted_until } : c));
     await fetch(`${CHATS_URL}/mute-chat`, {
       method: "POST", headers: apiHeaders(token),
-      body: JSON.stringify({ chat_id: chat.id, mute: muted }),
+      body: JSON.stringify({ chat_id: chat.id, mute: true, minutes }),
+    });
+    setMuteChat(null);
+    setContextChat(null);
+  }
+
+  async function unmute(chat: Chat) {
+    setChats(prev => prev.map(c => c.id === chat.id ? { ...c, muted: false, muted_until: null } : c));
+    await fetch(`${CHATS_URL}/mute-chat`, {
+      method: "POST", headers: apiHeaders(token),
+      body: JSON.stringify({ chat_id: chat.id, mute: false }),
     });
     setContextChat(null);
   }
@@ -2302,17 +2315,60 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: stri
               <Icon name={contextChat.pinned ? "PinOff" : "Pin"} size={18} className="text-sky-400" />
               <span className="text-sm text-foreground">{contextChat.pinned ? "Открепить" : "Закрепить"}</span>
             </button>
-            <button onClick={() => toggleMute(contextChat)}
-              className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-white/5 transition-colors border-t border-white/5">
-              <Icon name={contextChat.muted ? "Bell" : "BellOff"} size={18} className="text-amber-400" />
-              <span className="text-sm text-foreground">{contextChat.muted ? "Включить уведомления" : "Отключить уведомления"}</span>
-            </button>
+            {contextChat.muted ? (
+              <button onClick={() => unmute(contextChat)}
+                className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-white/5 transition-colors border-t border-white/5">
+                <Icon name="Bell" size={18} className="text-amber-400" />
+                <div className="text-left">
+                  <div className="text-sm text-foreground">Включить уведомления</div>
+                  {contextChat.muted_until && <div className="text-[11px] text-muted-foreground">до {new Date(contextChat.muted_until).toLocaleString("ru", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</div>}
+                </div>
+              </button>
+            ) : (
+              <button onClick={() => { setMuteChat(contextChat); setContextChat(null); }}
+                className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-white/5 transition-colors border-t border-white/5">
+                <Icon name="BellOff" size={18} className="text-amber-400" />
+                <span className="text-sm text-foreground">Отключить уведомления</span>
+              </button>
+            )}
             <button onClick={() => deleteChat(contextChat)}
               className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-red-500/10 transition-colors border-t border-white/5">
               <Icon name={contextChat.is_group ? "LogOut" : "Trash2"} size={18} className="text-red-400" />
               <span className="text-sm text-red-400">{contextChat.is_group ? "Покинуть группу" : "Удалить чат"}</span>
             </button>
             <button onClick={() => setContextChat(null)}
+              className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-white/5 transition-colors border-t border-white/5">
+              <Icon name="X" size={18} className="text-muted-foreground" />
+              <span className="text-sm text-muted-foreground">Отмена</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Диалог выбора времени заглушки */}
+      {muteChat && (
+        <div className="absolute inset-0 z-50 flex items-end justify-center pb-8 bg-black/50 backdrop-blur-sm animate-fade-in"
+          onClick={() => setMuteChat(null)}>
+          <div className="w-full max-w-sm mx-4 glass rounded-3xl border border-white/10 overflow-hidden animate-slide-up"
+            onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-white/5">
+              <Icon name="BellOff" size={18} className="text-amber-400" />
+              <span className="font-golos font-semibold text-foreground text-sm">Отключить уведомления</span>
+            </div>
+            {([
+              { label: "На 1 час", minutes: 60 },
+              { label: "На 8 часов", minutes: 480 },
+              { label: "На 24 часа", minutes: 1440 },
+              { label: "На неделю", minutes: 10080 },
+              { label: "Навсегда", minutes: null },
+            ] as { label: string; minutes: number | null }[]).map(({ label, minutes }) => (
+              <button key={label} onClick={() => applyMute(muteChat, minutes)}
+                className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-white/5 transition-colors border-t border-white/5">
+                <span className="text-sm text-foreground">{label}</span>
+                {minutes === null && <Icon name="Infinity" size={14} className="text-muted-foreground" />}
+              </button>
+            ))}
+            <button onClick={() => setMuteChat(null)}
               className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-white/5 transition-colors border-t border-white/5">
               <Icon name="X" size={18} className="text-muted-foreground" />
               <span className="text-sm text-muted-foreground">Отмена</span>
