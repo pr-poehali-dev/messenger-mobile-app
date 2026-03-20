@@ -141,10 +141,13 @@ def handler(event: dict, context) -> dict:
                     is_online = peer_last_seen and (now - peer_last_seen) < timedelta(minutes=2)
                     muted_raw = bool(r[16])
                     muted_until = r[17]
-                    # Если muted_until истёк — считаем незаглушённым
+                    # Если muted_until истёк — считаем незаглушённым и сбрасываем в БД
                     if muted_until and muted_until < now:
                         muted_raw = False
                         muted_until = None
+                        with conn.cursor() as cur2:
+                            cur2.execute(f"UPDATE {SCHEMA}.chat_members SET muted = FALSE, muted_until = NULL WHERE chat_id = %s AND user_id = %s", (r[0], user_id))
+                        conn.commit()
                     chats.append({
                         "id": r[0],
                         "is_group": r[1],

@@ -1978,11 +1978,12 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: stri
 
   async function unmute(chat: Chat) {
     setChats(prev => prev.map(c => c.id === chat.id ? { ...c, muted: false, muted_until: null } : c));
+    setContextChat(null);
+    setMuteChat(null);
     await fetch(`${CHATS_URL}/mute-chat`, {
       method: "POST", headers: apiHeaders(token),
       body: JSON.stringify({ chat_id: chat.id, mute: false }),
     });
-    setContextChat(null);
   }
 
   async function deleteChat(chat: Chat) {
