@@ -1022,7 +1022,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
             <Icon name="ArrowLeft" size={20} />
           </button>
           <button onClick={chat.is_group ? toggleMembers : undefined} className="flex items-center gap-3 flex-1 min-w-0">
-            <AvatarEl name={chat.name} size="sm" status={!chat.is_group ? (peerStatus.online ? "online" : "offline") : undefined} />
+            <AvatarEl name={chat.name} size="sm" status={!chat.is_group ? (peerStatus.online ? "online" : "offline") : undefined} avatarUrl={chat.avatar_url} />
             <div className="flex-1 min-w-0 text-left">
               <div className="font-golos font-semibold text-foreground text-sm truncate">{chat.name}</div>
               <div className="text-xs flex items-center gap-1">
@@ -2263,7 +2263,7 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: stri
               className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-all active:scale-[0.98] animate-fade-in"
               style={{ animationDelay: `${i * 0.04}s` }}>
               <div className="relative flex-shrink-0">
-                <AvatarEl name={chat.name} size="md" status={!chat.is_group ? (chat.peer_online ? "online" : "offline") : undefined} />
+                <AvatarEl name={chat.name} size="md" status={!chat.is_group ? (chat.peer_online ? "online" : "offline") : undefined} avatarUrl={chat.avatar_url} />
                 {chat.is_channel && (
                   <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-gradient-to-br from-purple-500 to-violet-600 flex items-center justify-center">
                     <Icon name="Radio" size={10} className="text-white" />
