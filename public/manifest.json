@@ -11,15 +11,63 @@
   "scope": "/",
   "icons": [
     {
-      "src": "https://cdn.poehali.dev/projects/84792fb2-1985-42c4-8056-a4e27799a11a/bucket/2069fcb7-f721-4674-b0d8-51603e738767.png",
+      "src": "https://cdn.poehali.dev/projects/84792fb2-1985-42c4-8056-a4e27799a11a/files/8f6169f2-71c4-4f34-8ad2-ca3c377792eb.jpg",
+      "sizes": "72x72",
+      "type": "image/jpeg",
+      "purpose": "any"
+    },
+    {
+      "src": "https://cdn.poehali.dev/projects/84792fb2-1985-42c4-8056-a4e27799a11a/files/8f6169f2-71c4-4f34-8ad2-ca3c377792eb.jpg",
+      "sizes": "96x96",
+      "type": "image/jpeg",
+      "purpose": "any"
+    },
+    {
+      "src": "https://cdn.poehali.dev/projects/84792fb2-1985-42c4-8056-a4e27799a11a/files/8f6169f2-71c4-4f34-8ad2-ca3c377792eb.jpg",
+      "sizes": "128x128",
+      "type": "image/jpeg",
+      "purpose": "any"
+    },
+    {
+      "src": "https://cdn.poehali.dev/projects/84792fb2-1985-42c4-8056-a4e27799a11a/files/8f6169f2-71c4-4f34-8ad2-ca3c377792eb.jpg",
+      "sizes": "144x144",
+      "type": "image/jpeg",
+      "purpose": "any"
+    },
+    {
+      "src": "https://cdn.poehali.dev/projects/84792fb2-1985-42c4-8056-a4e27799a11a/files/8f6169f2-71c4-4f34-8ad2-ca3c377792eb.jpg",
+      "sizes": "152x152",
+      "type": "image/jpeg",
+      "purpose": "any"
+    },
+    {
+      "src": "https://cdn.poehali.dev/projects/84792fb2-1985-42c4-8056-a4e27799a11a/files/8f6169f2-71c4-4f34-8ad2-ca3c377792eb.jpg",
+      "sizes": "180x180",
+      "type": "image/jpeg",
+      "purpose": "any"
+    },
+    {
+      "src": "https://cdn.poehali.dev/projects/84792fb2-1985-42c4-8056-a4e27799a11a/files/8f6169f2-71c4-4f34-8ad2-ca3c377792eb.jpg",
       "sizes": "192x192",
-      "type": "image/png",
+      "type": "image/jpeg",
       "purpose": "any maskable"
     },
     {
-      "src": "https://cdn.poehali.dev/projects/84792fb2-1985-42c4-8056-a4e27799a11a/bucket/2069fcb7-f721-4674-b0d8-51603e738767.png",
+      "src": "https://cdn.poehali.dev/projects/84792fb2-1985-42c4-8056-a4e27799a11a/files/8f6169f2-71c4-4f34-8ad2-ca3c377792eb.jpg",
+      "sizes": "256x256",
+      "type": "image/jpeg",
+      "purpose": "any"
+    },
+    {
+      "src": "https://cdn.poehali.dev/projects/84792fb2-1985-42c4-8056-a4e27799a11a/files/8f6169f2-71c4-4f34-8ad2-ca3c377792eb.jpg",
+      "sizes": "384x384",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://cdn.poehali.dev/projects/84792fb2-1985-42c4-8056-a4e27799a11a/files/8f6169f2-71c4-4f34-8ad2-ca3c377792eb.jpg",
       "sizes": "512x512",
-      "type": "image/png",
+      "type": "image/jpeg",
       "purpose": "any maskable"
     }
   ],
