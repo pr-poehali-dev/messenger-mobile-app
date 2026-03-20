@@ -312,6 +312,8 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
   const [editDesc, setEditDesc] = useState("");
   const [editPublic, setEditPublic] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
+  const [uploadingGroupAvatar, setUploadingGroupAvatar] = useState(false);
+  const groupAvatarInputRef = useRef<HTMLInputElement>(null);
   const [addMemberSearch, setAddMemberSearch] = useState("");
   const [addMemberResults, setAddMemberResults] = useState<{ id: number; name: string; phone: string; status: string }[]>([]);
   const [addMemberLoading, setAddMemberLoading] = useState(false);
@@ -591,6 +593,24 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
 
   const myRole = members.find(m => m.is_me)?.role ?? chat.my_role;
   const myCanPost = members.find(m => m.is_me)?.can_post ?? chat.can_post ?? false;
+
+  async function uploadGroupAvatar(file: File) {
+    setUploadingGroupAvatar(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const dataUrl = e.target?.result as string;
+        const res = await fetch(`${CHATS_URL}/upload-group-avatar`, {
+          method: "POST", headers: apiHeaders(token),
+          body: JSON.stringify({ chat_id: chat.id, image: dataUrl }),
+        });
+        const data = await res.json();
+        if (data.avatar_url) onChatUpdate?.({ avatar_url: data.avatar_url });
+        setUploadingGroupAvatar(false);
+      };
+      reader.readAsDataURL(file);
+    } catch { setUploadingGroupAvatar(false); }
+  }
 
   async function saveEditChat() {
     setEditSaving(true);
@@ -1085,6 +1105,23 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
                     <p className="text-[11px] font-semibold text-sky-400 uppercase tracking-wide mb-2">
                       {chat.is_channel ? "Настройки канала" : "Настройки группы"}
                     </p>
+                    {/* Фото группы/канала */}
+                    <div className="flex items-center gap-3 mb-1">
+                      <div className="relative group flex-shrink-0">
+                        <AvatarEl name={chat.name} size="lg" avatarUrl={chat.avatar_url} />
+                        <button onClick={() => groupAvatarInputRef.current?.click()}
+                          className="absolute inset-0 rounded-full flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {uploadingGroupAvatar
+                            ? <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                            : <Icon name="Camera" size={16} className="text-white" />}
+                        </button>
+                        <input ref={groupAvatarInputRef} type="file" accept="image/*" className="hidden"
+                          onChange={e => { const f = e.target.files?.[0]; if (f) uploadGroupAvatar(f); e.target.value = ""; }} />
+                      </div>
+                      <div className="text-xs text-muted-foreground leading-relaxed">
+                        Нажмите на фото чтобы изменить обложку {chat.is_channel ? "канала" : "группы"}
+                      </div>
+                    </div>
                     <input value={editName} onChange={e => setEditName(e.target.value)}
                       placeholder="Название..."
                       className="w-full bg-secondary/60 border border-white/10 rounded-xl px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 transition-all" />

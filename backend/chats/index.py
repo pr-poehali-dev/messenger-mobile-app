@@ -827,6 +827,36 @@ def handler(event: dict, context) -> dict:
                 "ok": True, "name": r[0], "description": r[1], "is_public": r[2], "is_channel": r[3]
             })}
 
+        # POST /upload-group-avatar — загрузить фото группы/канала (только admin)
+        if method == "POST" and "upload-group-avatar" in path:
+            body = json.loads(event.get("body") or "{}")
+            chat_id = body.get("chat_id")
+            data_url = body.get("image", "")
+            if not chat_id:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id обязателен"})}
+            if not data_url or "," not in data_url:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Нет изображения"})}
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT role FROM {SCHEMA}.chat_members WHERE chat_id = %s AND user_id = %s", (chat_id, user_id))
+                row = cur.fetchone()
+                if not row or row[0] != "admin":
+                    return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Только администратор"})}
+            header, b64data = data_url.split(",", 1)
+            img_bytes = base64.b64decode(b64data)
+            ext = "jpg"; content_type = "image/jpeg"
+            if "png" in header: ext = "png"; content_type = "image/png"
+            elif "webp" in header: ext = "webp"; content_type = "image/webp"
+            key = f"group_avatars/{chat_id}_{uuid.uuid4().hex[:8]}.{ext}"
+            s3 = boto3.client("s3", endpoint_url="https://bucket.poehali.dev",
+                aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+                aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"])
+            s3.put_object(Bucket="files", Key=key, Body=img_bytes, ContentType=content_type)
+            cdn_url = f"https://cdn.poehali.dev/projects/{os.environ['AWS_ACCESS_KEY_ID']}/bucket/{key}"
+            with conn.cursor() as cur:
+                cur.execute(f"UPDATE {SCHEMA}.chats SET avatar_url = %s WHERE id = %s", (cdn_url, chat_id))
+            conn.commit()
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "avatar_url": cdn_url})}
+
         # POST /set-role — назначить/изменить роль участника (только admin)
         if method == "POST" and "set-role" in path:
             body = json.loads(event.get("body") or "{}")
