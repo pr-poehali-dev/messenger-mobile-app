@@ -165,6 +165,16 @@
     background-clip: text;
   }
 
+  .kasper-title {
+    background: linear-gradient(135deg, #ffffff 0%, #a8d8f0 40%, #38d9f5 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    filter: drop-shadow(0 0 18px rgba(56, 217, 245, 0.85))
+      drop-shadow(0 0 40px rgba(0, 180, 230, 0.5));
+    letter-spacing: -0.02em;
+  }
+
   .text-gradient-warm {
     background: linear-gradient(135deg, #1a3a6b, #0077b6);
     -webkit-background-clip: text;
