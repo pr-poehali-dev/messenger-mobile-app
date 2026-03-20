@@ -383,7 +383,7 @@ def handler(event: dict, context) -> dict:
                             SELECT ps.endpoint, ps.p256dh, ps.auth
                             FROM {SCHEMA}.push_subscriptions ps
                             JOIN {SCHEMA}.chat_members cm ON cm.user_id = ps.user_id
-                            WHERE cm.chat_id = %s AND ps.user_id != %s
+                            WHERE cm.chat_id = %s AND ps.user_id != %s AND COALESCE(cm.muted, FALSE) = FALSE
                         """, (chat_id, user_id))
                         subs = cur.fetchall()
                     preview = (text or ("📎 Файл" if file_url else ""))[:80]
