@@ -163,7 +163,7 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User, isNew?: bo
           <div className="w-20 h-20 mx-auto mb-4 rounded-3xl bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center shadow-[0_0_40px_rgba(0,119,182,0.5)]">
             <Icon name="House" size={36} className="text-white" />
           </div>
-          <h1 className="text-4xl font-golos font-black italic mb-1 kasper-title">Каспер</h1>
+          <h1 className="text-4xl font-golos font-black italic mb-1 kasper-title uppercase">Каспер</h1>
           <p className="text-muted-foreground text-sm">Мессенджер вашего сообщества</p>
         </div>
 
