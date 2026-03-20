@@ -87,39 +87,50 @@ def handler(event: dict, context) -> dict:
 
         # GET /  — список чатов пользователя
         if method == "GET" and (path.endswith("/chats") or path.endswith("/chats/")):
+            from datetime import datetime, timezone, timedelta
             with conn.cursor() as cur:
+                # Оптимизированный запрос: один JOIN вместо 6 subqueries
                 cur.execute(f"""
                     SELECT
                         c.id,
-                        CASE WHEN c.is_group THEN c.name
-                             ELSE (SELECT u2.name FROM {SCHEMA}.chat_members cm2
-                                   JOIN {SCHEMA}.users u2 ON u2.id = cm2.user_id
-                                   WHERE cm2.chat_id = c.id AND cm2.user_id != %s LIMIT 1)
-                        END AS display_name,
                         c.is_group,
-                        (SELECT m.text FROM {SCHEMA}.messages m WHERE m.chat_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_msg,
-                        (SELECT m.created_at FROM {SCHEMA}.messages m WHERE m.chat_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_time,
-                        (SELECT COUNT(*) FROM {SCHEMA}.messages m WHERE m.chat_id = c.id AND m.is_read = FALSE AND m.sender_id != %s) AS unread,
-                        (SELECT COUNT(*) FROM {SCHEMA}.chat_members cm3 WHERE cm3.chat_id = c.id) AS member_count,
+                        COALESCE(c.name, peer.name, 'Без названия') AS display_name,
+                        lm.text AS last_msg,
+                        lm.created_at AS last_time,
+                        COALESCE(unread.cnt, 0) AS unread,
+                        COALESCE(mc.cnt, 0) AS member_count,
                         cm.role,
-                        CASE WHEN c.is_group THEN NULL
-                             ELSE (SELECT u2.last_seen FROM {SCHEMA}.chat_members cm2
-                                   JOIN {SCHEMA}.users u2 ON u2.id = cm2.user_id
-                                   WHERE cm2.chat_id = c.id AND cm2.user_id != %s LIMIT 1)
-                        END AS peer_last_seen,
+                        peer.last_seen AS peer_last_seen,
                         cm.pinned,
-                        CASE WHEN c.is_group THEN NULL
-                             ELSE (SELECT u2.id FROM {SCHEMA}.chat_members cm2
-                                   JOIN {SCHEMA}.users u2 ON u2.id = cm2.user_id
-                                   WHERE cm2.chat_id = c.id AND cm2.user_id != %s LIMIT 1)
-                        END AS peer_id
+                        peer.id AS peer_id
                     FROM {SCHEMA}.chats c
-                    JOIN {SCHEMA}.chat_members cm ON cm.chat_id = c.id AND cm.user_id = %s
-                    WHERE cm.hidden = FALSE
-                    ORDER BY cm.pinned DESC, last_time DESC NULLS LAST
-                """, (user_id, user_id, user_id, user_id, user_id))
+                    JOIN {SCHEMA}.chat_members cm ON cm.chat_id = c.id AND cm.user_id = %s AND cm.hidden = FALSE
+                    -- последнее сообщение через DISTINCT ON
+                    LEFT JOIN LATERAL (
+                        SELECT text, created_at FROM {SCHEMA}.messages
+                        WHERE chat_id = c.id AND hidden_at IS NULL
+                        ORDER BY created_at DESC LIMIT 1
+                    ) lm ON TRUE
+                    -- непрочитанные
+                    LEFT JOIN LATERAL (
+                        SELECT COUNT(*) AS cnt FROM {SCHEMA}.messages
+                        WHERE chat_id = c.id AND sender_id != %s AND is_read = FALSE AND hidden_at IS NULL
+                    ) unread ON TRUE
+                    -- количество участников
+                    LEFT JOIN LATERAL (
+                        SELECT COUNT(*) AS cnt FROM {SCHEMA}.chat_members WHERE chat_id = c.id
+                    ) mc ON TRUE
+                    -- собеседник (только для личных чатов)
+                    LEFT JOIN LATERAL (
+                        SELECT u2.id, u2.name, u2.last_seen
+                        FROM {SCHEMA}.chat_members cm2
+                        JOIN {SCHEMA}.users u2 ON u2.id = cm2.user_id
+                        WHERE cm2.chat_id = c.id AND cm2.user_id != %s AND NOT c.is_group
+                        LIMIT 1
+                    ) peer ON TRUE
+                    ORDER BY cm.pinned DESC, lm.created_at DESC NULLS LAST
+                """, (user_id, user_id, user_id))
                 rows = cur.fetchall()
-                from datetime import datetime, timezone, timedelta
                 now = datetime.now(timezone.utc)
                 chats = []
                 for r in rows:
@@ -127,8 +138,8 @@ def handler(event: dict, context) -> dict:
                     is_online = peer_last_seen and (now - peer_last_seen) < timedelta(minutes=2)
                     chats.append({
                         "id": r[0],
-                        "name": r[1] or "Без названия",
-                        "is_group": r[2],
+                        "is_group": r[1],
+                        "name": r[2],
                         "last_msg": r[3] or "",
                         "last_time": r[4].isoformat() if r[4] else None,
                         "unread": int(r[5]),
@@ -317,37 +328,42 @@ def handler(event: dict, context) -> dict:
 
             if not chat_id or (not text and not file_url):
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id и text или file_url обязательны"})}
+            if len(text) > 4000:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Сообщение слишком длинное"})}
 
-            with conn.cursor() as cur:
-                cur.execute(f"SELECT 1 FROM {SCHEMA}.chat_members WHERE chat_id = %s AND user_id = %s", (chat_id, user_id))
-                if not cur.fetchone():
-                    return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Нет доступа"})}
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(f"SELECT 1 FROM {SCHEMA}.chat_members WHERE chat_id = %s AND user_id = %s", (chat_id, user_id))
+                    if not cur.fetchone():
+                        return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Нет доступа"})}
 
-                # Resolve reply_to snapshot
-                reply_text = None
-                reply_name = None
-                if reply_to_id:
-                    cur.execute(f"""
-                        SELECT m.text, u.name FROM {SCHEMA}.messages m
-                        JOIN {SCHEMA}.users u ON u.id = m.sender_id
-                        WHERE m.id = %s
-                    """, (reply_to_id,))
-                    rr = cur.fetchone()
-                    if rr:
-                        reply_text = (rr[0] or "")[:200]
-                        reply_name = rr[1]
+                    reply_text = None
+                    reply_name = None
+                    if reply_to_id:
+                        cur.execute(f"""
+                            SELECT m.text, u.name FROM {SCHEMA}.messages m
+                            JOIN {SCHEMA}.users u ON u.id = m.sender_id
+                            WHERE m.id = %s
+                        """, (reply_to_id,))
+                        rr = cur.fetchone()
+                        if rr:
+                            reply_text = (rr[0] or "")[:200]
+                            reply_name = rr[1]
 
-                cur.execute(
-                    f"""INSERT INTO {SCHEMA}.messages
-                        (chat_id, sender_id, text, file_url, file_name, file_size, file_type,
-                         reply_to_id, reply_to_text, reply_to_name)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        RETURNING id, created_at""",
-                    (chat_id, user_id, text or "", file_url, file_name, file_size, file_type,
-                     reply_to_id, reply_text, reply_name)
-                )
-                msg_id, created_at = cur.fetchone()
-            conn.commit()
+                    cur.execute(
+                        f"""INSERT INTO {SCHEMA}.messages
+                            (chat_id, sender_id, text, file_url, file_name, file_size, file_type,
+                             reply_to_id, reply_to_text, reply_to_name)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            RETURNING id, created_at""",
+                        (chat_id, user_id, text or "", file_url, file_name, file_size, file_type,
+                         reply_to_id, reply_text, reply_name)
+                    )
+                    msg_id, created_at = cur.fetchone()
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                return {"statusCode": 500, "headers": cors, "body": json.dumps({"error": "Ошибка сохранения сообщения"})}
 
             # Send push notifications to other chat members
             if WEBPUSH_AVAILABLE:

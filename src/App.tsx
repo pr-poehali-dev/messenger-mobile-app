@@ -47,6 +47,7 @@ interface Message {
   reply_to_id?: number | null;
   reply_to_text?: string | null;
   reply_to_name?: string | null;
+  _failed?: boolean;
 }
 
 interface Chat {
@@ -370,40 +371,56 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
   const loadMessages = useCallback(async (silent = false) => {
     try {
       const res = await fetch(`${CHATS_URL}/messages?chat_id=${chat.id}`, { headers: apiHeaders(token) });
+      if (!res.ok) return;
       const data = await res.json();
       if (data.has_more !== undefined) setHasMore(data.has_more);
       if ("pinned" in data) setPinnedMsg(data.pinned);
-      if (data.messages) setMessages(prev => {
+      if (!data.messages) return;
+
+      setMessages(prev => {
+        // Индекс уже существующих реальных ID (не opt-)
         const prevIds = new Set(prev.map(m => String(m.id)));
-        const newIncoming = data.messages.filter((m: Message) => !prevIds.has(String(m.id)) && !m.out);
+        // Новые сообщения которых ещё нет (игнорируем optimistic)
+        const incoming = data.messages.filter((m: Message) => !prevIds.has(String(m.id)));
+        const newIncoming = incoming.filter((m: Message) => !m.out);
+
         if (silent && newIncoming.length > 0) {
           if (navigator.vibrate) navigator.vibrate([40, 30, 40]);
           try {
             const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
             const osc = ctx.createOscillator();
             const gain = ctx.createGain();
-            osc.connect(gain);
-            gain.connect(ctx.destination);
+            osc.connect(gain); gain.connect(ctx.destination);
             osc.type = "sine";
             osc.frequency.setValueAtTime(880, ctx.currentTime);
             osc.frequency.exponentialRampToValueAtTime(660, ctx.currentTime + 0.08);
             gain.gain.setValueAtTime(0.18, ctx.currentTime);
             gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
-            osc.start(ctx.currentTime);
-            osc.stop(ctx.currentTime + 0.18);
+            osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.18);
           } catch { /* браузер может заблокировать без жеста */ }
-        }
-        if (silent && newIncoming.length > 0) {
           setNewMsgCount(n => n + newIncoming.length);
         }
-        // Когда просматриваем старый контекст — не перезаписываем список новыми сообщениями
-        if (silent && isInContextRef.current) return prev;
-        if (!silent || newIncoming.length > 0 || data.messages.some((m: Message) => !prevIds.has(String(m.id)))) {
-          if (!silent || data.messages.some((m: Message) => !prevIds.has(String(m.id)))) return data.messages;
+
+        // В старом контексте — только добавляем новые, не заменяем всё
+        if (silent && isInContextRef.current) {
+          if (incoming.length === 0) return prev;
+          return [...prev, ...incoming];
         }
-        return prev;
+
+        if (!silent) return data.messages;
+
+        // При polling: если нет новых — не обновляем (избегаем лишних ре-рендеров)
+        if (incoming.length === 0) return prev;
+
+        // Склеиваем: optimistic сообщения + обновлённые данные с сервера
+        const optimisticOnly = prev.filter(m => String(m.id).startsWith("opt-"));
+        return [...data.messages, ...optimisticOnly];
       });
-    } finally { if (!silent) setLoading(false); }
+    } catch {
+      // сеть недоступна — тихо игнорируем при polling
+    } finally {
+      if (!silent) setLoading(false);
+    }
   }, [chat.id, token]);
 
   function formatDateLabel(dateStr: string): string {
@@ -480,9 +497,9 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     });
   }
 
-  // Poll for new messages every 3s
+  // Poll for new messages every 4s (не агрессивнее чем нужно)
   useEffect(() => {
-    const id = setInterval(() => loadMessages(true), 3000);
+    const id = setInterval(() => loadMessages(true), 4000);
     return () => clearInterval(id);
   }, [loadMessages]);
 
@@ -563,13 +580,13 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     const unread = messages.filter(m => !m.out && !m.is_read && typeof m.id === "number");
     if (!unread.length) return;
 
-    const markRead = (msgId: number) => {
-      fetch(`${CHATS_URL}/read`, {
-        method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ message_id: msgId }),
-      });
+    const markRead = async (msgId: number) => {
       setMessages(prev => prev.map(m => m.id === msgId ? { ...m, is_read: true } : m));
       onMessageRead?.();
+      await fetch(`${CHATS_URL}/read`, {
+        method: "POST", headers: apiHeaders(token),
+        body: JSON.stringify({ message_id: msgId }),
+      }).catch(() => {});
     };
 
     const observer = new IntersectionObserver(entries => {
@@ -775,8 +792,9 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     const pf = pendingFile;
     if (!t && !pf) return;
     const rp = replyTo;
+    const optId = `opt-${Date.now()}-${Math.random()}`;
     const optimistic: Message = {
-      id: `opt-${Date.now()}`, text: t,
+      id: optId, text: t,
       time: new Date().toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" }),
       out: true, is_read: false,
       file_url: pf?.url, file_name: pf?.name, file_size: pf?.size, file_type: pf?.type,
@@ -799,9 +817,15 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
       });
       const data = await res.json();
       if (data.message) {
-        setMessages(prev => prev.map(m => m.id === optimistic.id ? { ...data.message, out: true } : m));
+        setMessages(prev => prev.map(m => m.id === optId ? { ...data.message, out: true } : m));
+      } else {
+        // Сервер вернул ошибку — помечаем сообщение как неотправленное
+        setMessages(prev => prev.map(m => m.id === optId ? { ...m, _failed: true } : m));
       }
-    } catch { /* keep optimistic */ }
+    } catch {
+      // Сеть недоступна — помечаем как неотправленное
+      setMessages(prev => prev.map(m => m.id === optId ? { ...m, _failed: true } : m));
+    }
   }
 
   async function startRecording() {
@@ -1232,7 +1256,8 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
                 <div className={`flex items-center gap-1.5 mt-1 ${msg.out ? "justify-end" : "justify-start"}`}>
                   {msg.is_edited && !msg.is_deleted && <span className="text-[10px] text-white/40 italic">изменено</span>}
                   <span className="text-[10px] text-white/50">{msg.time}</span>
-                  {msg.out && <Icon name={msg.is_read ? "CheckCheck" : "Check"} size={12} className={msg.is_read ? "text-cyan-400" : "text-white/50"} />}
+                  {msg.out && !msg._failed && <Icon name={msg.is_read ? "CheckCheck" : "Check"} size={12} className={msg.is_read ? "text-cyan-400" : "text-white/50"} />}
+                  {msg._failed && <Icon name="AlertCircle" size={12} className="text-red-400" title="Не отправлено" />}
                 </div>
               </div>
 
