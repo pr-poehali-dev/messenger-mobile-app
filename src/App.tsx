@@ -782,6 +782,32 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     if (editingMsg) { setText(editingMsg.text); }
   }, [editingMsg]);
 
+  async function doSend(optId: string, payload: { text: string; file_url?: string | null; file_name?: string | null; file_size?: number | null; file_type?: string | null; reply_to_id?: number | null }) {
+    setMessages(prev => prev.map(m => m.id === optId ? { ...m, _failed: false } : m));
+    try {
+      const res = await fetch(`${CHATS_URL}/send`, {
+        method: "POST", headers: apiHeaders(token),
+        body: JSON.stringify({ chat_id: chat.id, ...payload }),
+      });
+      const data = await res.json();
+      if (data.message) {
+        setMessages(prev => prev.map(m => m.id === optId ? { ...data.message, out: true } : m));
+      } else {
+        setMessages(prev => prev.map(m => m.id === optId ? { ...m, _failed: true } : m));
+      }
+    } catch {
+      setMessages(prev => prev.map(m => m.id === optId ? { ...m, _failed: true } : m));
+    }
+  }
+
+  async function retrySend(msg: Message) {
+    const payload = {
+      text: msg.text, file_url: msg.file_url, file_name: msg.file_name,
+      file_size: msg.file_size, file_type: msg.file_type, reply_to_id: msg.reply_to_id ?? null,
+    };
+    await doSend(String(msg.id), payload);
+  }
+
   async function send() {
     if (editingMsg) {
       await editMessage(editingMsg.id, text);
@@ -803,29 +829,11 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
       reply_to_name: rp?.name ?? null,
     };
     setMessages(prev => [...prev, optimistic]);
-    setText("");
-    setPendingFile(null);
-    setReplyTo(null);
-    try {
-      const res = await fetch(`${CHATS_URL}/send`, {
-        method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({
-          chat_id: chat.id, text: t,
-          file_url: pf?.url, file_name: pf?.name, file_size: pf?.size, file_type: pf?.type,
-          reply_to_id: rp ? Number(rp.id) : null,
-        }),
-      });
-      const data = await res.json();
-      if (data.message) {
-        setMessages(prev => prev.map(m => m.id === optId ? { ...data.message, out: true } : m));
-      } else {
-        // Сервер вернул ошибку — помечаем сообщение как неотправленное
-        setMessages(prev => prev.map(m => m.id === optId ? { ...m, _failed: true } : m));
-      }
-    } catch {
-      // Сеть недоступна — помечаем как неотправленное
-      setMessages(prev => prev.map(m => m.id === optId ? { ...m, _failed: true } : m));
-    }
+    setText(""); setPendingFile(null); setReplyTo(null);
+    await doSend(optId, {
+      text: t, file_url: pf?.url, file_name: pf?.name, file_size: pf?.size, file_type: pf?.type,
+      reply_to_id: rp ? Number(rp.id) : null,
+    });
   }
 
   async function startRecording() {
@@ -1257,7 +1265,12 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
                   {msg.is_edited && !msg.is_deleted && <span className="text-[10px] text-white/40 italic">изменено</span>}
                   <span className="text-[10px] text-white/50">{msg.time}</span>
                   {msg.out && !msg._failed && <Icon name={msg.is_read ? "CheckCheck" : "Check"} size={12} className={msg.is_read ? "text-cyan-400" : "text-white/50"} />}
-                  {msg._failed && <Icon name="AlertCircle" size={12} className="text-red-400" title="Не отправлено" />}
+                  {msg._failed && (
+                    <button onClick={() => retrySend(msg)} className="flex items-center gap-1 text-red-400 hover:text-red-300 transition-colors" title="Нажми чтобы повторить">
+                      <Icon name="AlertCircle" size={12} />
+                      <span className="text-[10px]">повторить</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
