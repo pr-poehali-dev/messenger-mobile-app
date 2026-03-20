@@ -230,7 +230,7 @@ def handler(event: dict, context) -> dict:
                                m.file_url, m.file_name, m.file_size, m.file_type,
                                m.is_edited, m.hidden_at,
                                m.reply_to_id, m.reply_to_text, m.reply_to_name,
-                               m.is_pinned"""
+                               m.is_pinned, u.avatar_url"""
                 if around_id:
                     # 20 до + само + 20 после = до 41 сообщения вокруг нужного
                     cur.execute(f"""
@@ -317,6 +317,7 @@ def handler(event: dict, context) -> dict:
                 "reply_to_text": r[13],
                 "reply_to_name": r[14],
                 "is_pinned": r[15],
+                "sender_avatar": r[16],
             } for r in rows]
 
             # Load pinned messages (latest pinned, not deleted)
@@ -742,14 +743,14 @@ def handler(event: dict, context) -> dict:
                 if not cur.fetchone():
                     return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Нет доступа"})}
                 cur.execute(f"""
-                    SELECT u.id, u.name, u.status, cm.role, cm.can_post
+                    SELECT u.id, u.name, u.status, cm.role, cm.can_post, u.avatar_url
                     FROM {SCHEMA}.chat_members cm
                     JOIN {SCHEMA}.users u ON u.id = cm.user_id
                     WHERE cm.chat_id = %s
                     ORDER BY cm.role DESC, u.name
                 """, (chat_id,))
                 rows = cur.fetchall()
-            members = [{"id": r[0], "name": r[1], "status": r[2], "role": r[3], "can_post": bool(r[4]), "is_me": r[0] == user_id} for r in rows]
+            members = [{"id": r[0], "name": r[1], "status": r[2], "role": r[3], "can_post": bool(r[4]), "is_me": r[0] == user_id, "avatar_url": r[5]} for r in rows]
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"members": members})}
 
         # POST /leave — покинуть группу
@@ -912,12 +913,12 @@ def handler(event: dict, context) -> dict:
             q = params.get("q", "").strip()
             with conn.cursor() as cur:
                 cur.execute(f"""
-                    SELECT id, name, phone, status FROM {SCHEMA}.users
+                    SELECT id, name, phone, status, avatar_url FROM {SCHEMA}.users
                     WHERE id != %s AND (name ILIKE %s OR phone ILIKE %s)
                     LIMIT 20
                 """, (user_id, f"%{q}%", f"%{q}%"))
                 rows = cur.fetchall()
-            users = [{"id": r[0], "name": r[1], "phone": r[2], "status": r[3]} for r in rows]
+            users = [{"id": r[0], "name": r[1], "phone": r[2], "status": r[3], "avatar_url": r[4]} for r in rows]
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"users": users})}
 
         # GET /vapid-public-key — отдать публичный VAPID ключ фронтенду

@@ -36,6 +36,7 @@ interface Message {
   out: boolean;
   is_read: boolean;
   sender_name?: string;
+  sender_avatar?: string | null;
   file_url?: string | null;
   file_name?: string | null;
   file_size?: number | null;
@@ -303,7 +304,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
   const [loading, setLoading] = useState(true);
   const [typists, setTypists] = useState<string[]>([]);
   const [showMembers, setShowMembers] = useState(false);
-  const [members, setMembers] = useState<{ id: number; name: string; status: string; role: string; can_post: boolean; is_me: boolean }[]>([]);
+  const [members, setMembers] = useState<{ id: number; name: string; status: string; role: string; can_post: boolean; is_me: boolean; avatar_url?: string | null }[]>([]);
   const [membersLoading, setMembersLoading] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [confirmKick, setConfirmKick] = useState<{ id: number; name: string } | null>(null);
@@ -315,7 +316,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
   const [uploadingGroupAvatar, setUploadingGroupAvatar] = useState(false);
   const groupAvatarInputRef = useRef<HTMLInputElement>(null);
   const [addMemberSearch, setAddMemberSearch] = useState("");
-  const [addMemberResults, setAddMemberResults] = useState<{ id: number; name: string; phone: string; status: string }[]>([]);
+  const [addMemberResults, setAddMemberResults] = useState<{ id: number; name: string; phone: string; status: string; avatar_url?: string | null }[]>([]);
   const [addMemberLoading, setAddMemberLoading] = useState(false);
   const [leftGroup, setLeftGroup] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -1167,7 +1168,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
                     {addMemberResults.map(u => (
                       <button key={u.id} onClick={() => addMember(u.id, u.name)}
                         className="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/5 transition-colors text-left">
-                        <AvatarEl name={u.name} size="xs" status={u.status} />
+                        <AvatarEl name={u.name} size="xs" status={u.status} avatarUrl={u.avatar_url} />
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-medium text-foreground truncate">{u.name}</p>
                           <p className="text-[10px] text-muted-foreground">{u.phone}</p>
@@ -1213,7 +1214,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
                     };
                     return (
                       <div key={m.id} className="flex items-center gap-2 p-2 rounded-xl hover:bg-white/5 transition-all group">
-                        <AvatarEl name={m.name} size="xs" status={m.status} />
+                        <AvatarEl name={m.name} size="xs" status={m.status} avatarUrl={m.avatar_url} />
                         <div className="flex-1 min-w-0">
                           <span className="text-sm font-medium text-foreground truncate block">{m.is_me ? "Вы" : m.name}</span>
                           {chat.is_channel && m.can_post && !m.is_me && (
@@ -3245,11 +3246,11 @@ function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (us
   const [addLoading, setAddLoading] = useState(false);
   const [addError, setAddError] = useState("");
   const [tab, setTab] = useState<"my" | "search">("my");
-  const [searchUsers, setSearchUsers] = useState<{ id: number; name: string; phone: string; status: string }[]>([]);
+  const [searchUsers, setSearchUsers] = useState<{ id: number; name: string; phone: string; status: string; avatar_url?: string | null }[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchQ, setSearchQ] = useState("");
 
-  useEffect(() => { loadContacts(); }, []);
+  useEffect(() => { loadContacts(); }, [token]);
 
   async function loadContacts() {
     setLoading(true);
@@ -3445,7 +3446,7 @@ function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (us
                   <div className="px-4 py-1 text-[11px] font-bold text-muted-foreground uppercase tracking-widest">{letter}</div>
                   {grouped[letter].map(c => (
                     <div key={c.id} className="flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-all group">
-                      <AvatarEl name={c.name} size="md" status={c.status ?? undefined} />
+                      <AvatarEl name={c.name} size="md" status={c.status ?? undefined} avatarUrl={c.avatar_url} />
                       <div className="flex-1 min-w-0">
                         <div className="font-golos font-semibold text-foreground text-sm truncate">{c.name}</div>
                         <div className="text-xs text-muted-foreground">{c.phone}</div>
@@ -3482,7 +3483,7 @@ function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (us
             {searchUsers.map((u, i) => (
               <div key={u.id} className="flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-all animate-fade-in"
                 style={{ animationDelay: `${i * 0.04}s` }}>
-                <AvatarEl name={u.name} size="md" status={u.status} />
+                <AvatarEl name={u.name} size="md" status={u.status} avatarUrl={u.avatar_url} />
                 <div className="flex-1 min-w-0">
                   <div className="font-golos font-semibold text-foreground text-sm truncate">{u.name}</div>
                   <div className="text-xs text-muted-foreground">{u.phone}</div>
