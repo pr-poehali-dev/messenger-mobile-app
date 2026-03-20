@@ -29,6 +29,14 @@
       "body": {},
       "expectedStatus": 400,
       "bodyMatcher": "partial"
+    },
+    {
+      "name": "Delete chat - no auth",
+      "method": "POST",
+      "path": "/delete-chat",
+      "body": {},
+      "expectedStatus": 400,
+      "bodyMatcher": "partial"
     }
   ]
 }

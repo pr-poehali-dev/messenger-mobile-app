@@ -930,6 +930,27 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "muted": mute, "muted_until": muted_until.isoformat() if muted_until else None})}
 
+        # POST /delete-chat — полное удаление группы/канала (только owner/admin)
+        if method == "POST" and "delete-chat" in path:
+            body = json.loads(event.get("body") or "{}")
+            chat_id = body.get("chat_id")
+            if not chat_id:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id обязателен"})}
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT is_group FROM {SCHEMA}.chats WHERE id = %s", (chat_id,))
+                row = cur.fetchone()
+                if not row or not row[0]:
+                    return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Можно удалить только группу или канал"})}
+                cur.execute(f"SELECT role FROM {SCHEMA}.chat_members WHERE chat_id = %s AND user_id = %s", (chat_id, user_id))
+                member = cur.fetchone()
+                if not member or member[0] not in ("owner", "admin"):
+                    return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Нет прав для удаления"})}
+                cur.execute(f"DELETE FROM {SCHEMA}.messages WHERE chat_id = %s", (chat_id,))
+                cur.execute(f"DELETE FROM {SCHEMA}.chat_members WHERE chat_id = %s", (chat_id,))
+                cur.execute(f"DELETE FROM {SCHEMA}.chats WHERE id = %s", (chat_id,))
+            conn.commit()
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
+
         # POST /hide-chat — скрыть личный чат для себя (мягкое удаление)
         if method == "POST" and "hide-chat" in path:
             body = json.loads(event.get("body") or "{}")

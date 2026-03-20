@@ -1881,6 +1881,7 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: stri
   const [groupCreating, setGroupCreating] = useState(false);
   const [contextChat, setContextChat] = useState<Chat | null>(null);
   const [muteChat, setMuteChat] = useState<Chat | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{ chat: Chat; action: "leave" | "delete" | "hide" } | null>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [globalResults, setGlobalResults] = useState<{ msg_id: number; text: string; time: string | null; chat_id: number; chat_name: string; is_group: boolean; sender_name: string; is_out: boolean }[]>([]);
   const [globalSearching, setGlobalSearching] = useState(false);
@@ -1986,20 +1987,17 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: stri
     });
   }
 
-  async function deleteChat(chat: Chat) {
+  async function execChatAction(chat: Chat, action: "leave" | "delete" | "hide") {
+    setConfirmAction(null);
     setContextChat(null);
-    if (chat.is_group) {
-      setChats(prev => prev.filter(c => c.id !== chat.id));
-      await fetch(`${CHATS_URL}/leave`, {
-        method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ chat_id: chat.id }),
-      });
+    if (activeChat?.id === chat.id) setActiveChat(null);
+    setChats(prev => prev.filter(c => c.id !== chat.id));
+    if (action === "leave") {
+      await fetch(`${CHATS_URL}/leave`, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ chat_id: chat.id }) });
+    } else if (action === "delete") {
+      await fetch(`${CHATS_URL}/delete-chat`, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ chat_id: chat.id }) });
     } else {
-      setChats(prev => prev.filter(c => c.id !== chat.id));
-      await fetch(`${CHATS_URL}/hide-chat`, {
-        method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ chat_id: chat.id }),
-      });
+      await fetch(`${CHATS_URL}/hide-chat`, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ chat_id: chat.id }) });
     }
   }
 
@@ -2332,11 +2330,28 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: stri
                 <span className="text-sm text-foreground">Отключить уведомления</span>
               </button>
             )}
-            <button onClick={() => deleteChat(contextChat)}
-              className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-red-500/10 transition-colors border-t border-white/5">
-              <Icon name={contextChat.is_group ? "LogOut" : "Trash2"} size={18} className="text-red-400" />
-              <span className="text-sm text-red-400">{contextChat.is_group ? "Покинуть группу" : "Удалить чат"}</span>
-            </button>
+            {contextChat.is_group ? (
+              <>
+                <button onClick={() => { setConfirmAction({ chat: contextChat, action: "leave" }); setContextChat(null); }}
+                  className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-red-500/10 transition-colors border-t border-white/5">
+                  <Icon name="LogOut" size={18} className="text-red-400" />
+                  <span className="text-sm text-red-400">{contextChat.is_channel ? "Покинуть канал" : "Покинуть группу"}</span>
+                </button>
+                {(contextChat.my_role === "owner" || contextChat.my_role === "admin") && (
+                  <button onClick={() => { setConfirmAction({ chat: contextChat, action: "delete" }); setContextChat(null); }}
+                    className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-red-500/10 transition-colors border-t border-white/5">
+                    <Icon name="Trash2" size={18} className="text-red-400" />
+                    <span className="text-sm text-red-400">{contextChat.is_channel ? "Удалить канал" : "Удалить группу"}</span>
+                  </button>
+                )}
+              </>
+            ) : (
+              <button onClick={() => { setConfirmAction({ chat: contextChat, action: "hide" }); setContextChat(null); }}
+                className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-red-500/10 transition-colors border-t border-white/5">
+                <Icon name="Trash2" size={18} className="text-red-400" />
+                <span className="text-sm text-red-400">Удалить переписку</span>
+              </button>
+            )}
             <button onClick={() => setContextChat(null)}
               className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-white/5 transition-colors border-t border-white/5">
               <Icon name="X" size={18} className="text-muted-foreground" />
@@ -2377,6 +2392,46 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: stri
           </div>
         </div>
       )}
+
+      {/* Диалог подтверждения действия с чатом */}
+      {confirmAction && (() => {
+        const { chat, action } = confirmAction;
+        const isDelete = action === "delete";
+        const isLeave = action === "leave";
+        const title = isDelete
+          ? `Удалить ${chat.is_channel ? "канал" : "группу"}?`
+          : isLeave
+          ? `Покинуть ${chat.is_channel ? "канал" : "группу"}?`
+          : "Удалить переписку?";
+        const desc = isDelete
+          ? `«${chat.name}» будет удалён${chat.is_channel ? "" : "а"} для всех участников без возможности восстановления.`
+          : isLeave
+          ? `Вы покинете «${chat.name}» и больше не будете получать сообщения.`
+          : `История переписки с «${chat.name}» будет удалена только у вас.`;
+        const btnLabel = isDelete ? "Удалить" : isLeave ? "Покинуть" : "Удалить";
+        return (
+          <div className="absolute inset-0 z-50 flex items-end justify-center pb-8 bg-black/50 backdrop-blur-sm animate-fade-in"
+            onClick={() => setConfirmAction(null)}>
+            <div className="w-full max-w-sm mx-4 glass rounded-3xl border border-white/10 overflow-hidden animate-slide-up"
+              onClick={e => e.stopPropagation()}>
+              <div className="px-5 py-4 border-b border-white/5">
+                <p className="font-golos font-semibold text-foreground text-sm">{title}</p>
+                <p className="text-xs text-muted-foreground mt-1">{desc}</p>
+              </div>
+              <button onClick={() => execChatAction(chat, action)}
+                className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-red-500/10 transition-colors">
+                <Icon name={isLeave ? "LogOut" : "Trash2"} size={18} className="text-red-400" />
+                <span className="text-sm text-red-400 font-medium">{btnLabel}</span>
+              </button>
+              <button onClick={() => setConfirmAction(null)}
+                className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-white/5 transition-colors border-t border-white/5">
+                <Icon name="X" size={18} className="text-muted-foreground" />
+                <span className="text-sm text-muted-foreground">Отмена</span>
+              </button>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
