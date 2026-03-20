@@ -131,42 +131,115 @@ function AvatarEl({ name, size = "md", status, avatarUrl }: {
 
 function AuthScreen({ onAuth }: { onAuth: (token: string, user: User, isNew?: boolean) => void }) {
   const [mode, setMode] = useState<"login" | "register">("login");
+  // Шаги: "contact" → "otp" → готово
+  const [step, setStep] = useState<"contact" | "otp">("contact");
+  const [contact, setContact] = useState(""); // телефон или email
   const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [password, setPassword] = useState("");
+  const [otp, setOtp] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [showPass, setShowPass] = useState(false);
+  const [resendTimer, setResendTimer] = useState(0);
+  const [devCode, setDevCode] = useState(""); // только при отсутствии SMTP/SMS
+  const [contactType, setContactType] = useState<"phone" | "email">("phone");
 
-  async function submit() {
+  const otpRefs = [
+    useRef<HTMLInputElement>(null),
+    useRef<HTMLInputElement>(null),
+    useRef<HTMLInputElement>(null),
+    useRef<HTMLInputElement>(null),
+    useRef<HTMLInputElement>(null),
+    useRef<HTMLInputElement>(null),
+  ];
+
+  useEffect(() => {
+    if (resendTimer <= 0) return;
+    const t = setTimeout(() => setResendTimer(r => r - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendTimer]);
+
+  // Определяем тип контакта при вводе
+  useEffect(() => {
+    setContactType(contact.includes("@") ? "email" : "phone");
+  }, [contact]);
+
+  function reset() {
+    setStep("contact"); setOtp(""); setError(""); setDevCode("");
+  }
+
+  async function sendCode() {
     setError("");
-    if (!phone.trim() || !password) { setError("Заполните все поля"); return; }
+    const c = contact.trim();
+    if (!c) { setError("Введите телефон или email"); return; }
     if (mode === "register" && !name.trim()) { setError("Введите имя"); return; }
     setLoading(true);
     try {
-      const endpoint = mode === "register" ? "/register" : "/login";
-      const body: Record<string, string> = { phone: phone.trim(), password };
-      if (mode === "register") body.name = name.trim();
-      const res = await fetch(AUTH_URL + endpoint, {
-        method: "POST", headers: apiHeaders(), body: JSON.stringify(body),
+      const res = await fetch(`${AUTH_URL}/send-code`, {
+        method: "POST", headers: apiHeaders(),
+        body: JSON.stringify({ contact: c, purpose: mode }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error || "Ошибка"); return; }
-      onAuth(data.token, data.user, mode === "register");
-    } catch {
-      setError("Ошибка сети. Попробуйте снова");
-    } finally {
-      setLoading(false);
+      if (data.dev_code) setDevCode(data.dev_code);
+      setStep("otp");
+      setResendTimer(60);
+    } catch { setError("Ошибка сети. Попробуйте снова"); }
+    finally { setLoading(false); }
+  }
+
+  async function verifyCode() {
+    const code = otp.trim();
+    if (code.length !== 6) { setError("Введите 6-значный код"); return; }
+    setError(""); setLoading(true);
+    try {
+      const res = await fetch(`${AUTH_URL}/verify-code`, {
+        method: "POST", headers: apiHeaders(),
+        body: JSON.stringify({ contact: contact.trim(), code, purpose: mode, name: name.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error || "Неверный код"); return; }
+      onAuth(data.token, data.user, data.is_new);
+    } catch { setError("Ошибка сети. Попробуйте снова"); }
+    finally { setLoading(false); }
+  }
+
+  function handleOtpInput(val: string, idx: number) {
+    const digits = val.replace(/\D/g, "");
+    if (digits.length > 1) {
+      // Вставка всего кода сразу
+      const newOtp = (otp + digits).slice(0, 6).padEnd(6, "");
+      setOtp(newOtp.slice(0, 6));
+      otpRefs[Math.min(5, digits.length - 1)]?.current?.focus();
+      return;
+    }
+    const arr = (otp + "      ").slice(0, 6).split("");
+    arr[idx] = digits;
+    const next = arr.join("").trimEnd();
+    setOtp(next.slice(0, 6));
+    if (digits && idx < 5) otpRefs[idx + 1]?.current?.focus();
+  }
+
+  function handleOtpKey(e: React.KeyboardEvent, idx: number) {
+    if (e.key === "Backspace") {
+      const arr = (otp + "      ").slice(0, 6).split("");
+      if (arr[idx] && arr[idx].trim()) {
+        arr[idx] = "";
+        setOtp(arr.join("").trimEnd());
+      } else if (idx > 0) {
+        arr[idx - 1] = "";
+        setOtp(arr.join("").trimEnd());
+        otpRefs[idx - 1]?.current?.focus();
+      }
     }
   }
 
+  const inputClass = "w-full bg-secondary/60 border border-white/10 rounded-2xl pl-11 pr-4 py-3.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 focus:bg-secondary/80 transition-all";
+
   return (
     <div className="flex flex-col h-full overflow-hidden relative">
+      {/* Background */}
       <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-0 left-0 w-full h-1/2"
-          style={{ background: "radial-gradient(ellipse at 30% 20%, rgba(0,119,182,0.18) 0%, transparent 60%)" }} />
-        <div className="absolute bottom-0 right-0 w-full h-1/2"
-          style={{ background: "radial-gradient(ellipse at 70% 80%, rgba(34,211,238,0.1) 0%, transparent 60%)" }} />
+        <div className="absolute top-0 left-0 w-full h-1/2" style={{ background: "radial-gradient(ellipse at 30% 20%, rgba(0,119,182,0.18) 0%, transparent 60%)" }} />
+        <div className="absolute bottom-0 right-0 w-full h-1/2" style={{ background: "radial-gradient(ellipse at 70% 80%, rgba(34,211,238,0.1) 0%, transparent 60%)" }} />
         {[{ top: "8%", left: "15%", size: 60, delay: "0s", dur: "4s", c: 0 },
           { top: "20%", left: "72%", size: 40, delay: "1s", dur: "3.5s", c: 1 },
           { top: "60%", left: "5%", size: 30, delay: "0.5s", dur: "5s", c: 0 }].map((b, i) => (
@@ -177,75 +250,150 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User, isNew?: bo
         ))}
       </div>
 
-      <div className="relative z-10 flex flex-col justify-center flex-1 px-6 py-8">
-        <div className="text-center mb-8 animate-fade-in">
+      <div className="relative z-10 flex flex-col justify-center flex-1 px-6 py-8 scroll-container overflow-y-auto">
+        {/* Лого */}
+        <div className="text-center mb-6 animate-fade-in">
           <div className="w-20 h-20 mx-auto mb-4">
-            <img src="https://cdn.poehali.dev/projects/84792fb2-1985-42c4-8056-a4e27799a11a/bucket/2069fcb7-f721-4674-b0d8-51603e738767.png" alt="Каспер" className="w-full h-full object-cover rounded-full" style={{mixBlendMode: 'normal', background: 'transparent'}} />
+            <img src="https://cdn.poehali.dev/projects/84792fb2-1985-42c4-8056-a4e27799a11a/bucket/2069fcb7-f721-4674-b0d8-51603e738767.png"
+              alt="Каспер" className="w-full h-full object-cover rounded-full" />
           </div>
           <h1 className="text-4xl font-golos font-black italic mb-1 kasper-title uppercase">Каспер</h1>
           <p className="text-muted-foreground text-sm">Мессенджер вашего сообщества</p>
         </div>
 
-        <div className="glass rounded-2xl p-1 flex gap-1 mb-6 animate-fade-in" style={{ animationDelay: "0.05s" }}>
-          {(["login", "register"] as const).map(m => (
-            <button key={m} onClick={() => { setMode(m); setError(""); }}
-              className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200
-                ${mode === m ? "bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-[0_0_20px_rgba(0,180,230,0.4)]" : "text-muted-foreground hover:text-foreground"}`}>
-              {m === "login" ? "Войти" : "Регистрация"}
-            </button>
-          ))}
-        </div>
+        {step === "contact" ? (
+          <>
+            {/* Переключатель Войти/Регистрация */}
+            <div className="glass rounded-2xl p-1 flex gap-1 mb-5 animate-fade-in" style={{ animationDelay: "0.05s" }}>
+              {(["login", "register"] as const).map(m => (
+                <button key={m} onClick={() => { setMode(m); setError(""); }}
+                  className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200
+                    ${mode === m ? "bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-[0_0_20px_rgba(0,180,230,0.4)]" : "text-muted-foreground hover:text-foreground"}`}>
+                  {m === "login" ? "Войти" : "Регистрация"}
+                </button>
+              ))}
+            </div>
 
-        <div className="space-y-3 animate-fade-in" style={{ animationDelay: "0.1s" }}>
-          {mode === "register" && (
-            <div className="relative animate-fade-in">
-              <div className="absolute left-4 top-1/2 -translate-y-1/2">
-                <Icon name="User" size={16} className="text-muted-foreground" />
+            <div className="space-y-3 animate-fade-in" style={{ animationDelay: "0.1s" }}>
+              {mode === "register" && (
+                <div className="relative animate-fade-in">
+                  <div className="absolute left-4 top-1/2 -translate-y-1/2">
+                    <Icon name="User" size={16} className="text-muted-foreground" />
+                  </div>
+                  <input value={name} onChange={e => setName(e.target.value)}
+                    placeholder="Ваше имя" autoComplete="name"
+                    className={inputClass} />
+                </div>
+              )}
+
+              {/* Единое поле — телефон или email */}
+              <div className="relative">
+                <div className="absolute left-4 top-1/2 -translate-y-1/2">
+                  <Icon name={contactType === "email" ? "Mail" : "Phone"} size={16} className="text-muted-foreground" />
+                </div>
+                <input value={contact}
+                  onChange={e => setContact(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && sendCode()}
+                  placeholder="Телефон или Email"
+                  type={contactType === "email" ? "email" : "tel"}
+                  autoComplete={contactType === "email" ? "email" : "tel"}
+                  inputMode={contactType === "email" ? "email" : "tel"}
+                  className={inputClass} />
               </div>
-              <input value={name} onChange={e => setName(e.target.value)} placeholder="Ваше имя"
-                className="w-full bg-secondary/60 border border-white/10 rounded-2xl pl-11 pr-4 py-3.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 focus:bg-secondary transition-all" />
+
+              {/* Подсказка */}
+              <div className="flex items-center gap-2 text-xs text-muted-foreground px-1">
+                <Icon name="Info" size={12} className="flex-shrink-0" />
+                <span>Мы отправим код подтверждения на {contactType === "email" ? "почту" : "телефон"}</span>
+              </div>
+
+              {error && (
+                <div className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-red-500/10 border border-red-500/20 animate-fade-in">
+                  <Icon name="AlertCircle" size={14} className="text-red-400 flex-shrink-0" />
+                  <span className="text-xs text-red-300">{error}</span>
+                </div>
+              )}
+
+              <button onClick={sendCode} disabled={loading}
+                className="w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 to-blue-700 text-white font-golos font-semibold text-base hover:opacity-90 active:scale-[0.98] transition-all shadow-[0_0_30px_rgba(0,180,230,0.4)] disabled:opacity-60 mt-2 flex items-center justify-center gap-2">
+                {loading
+                  ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />Отправляем код...</>
+                  : <><Icon name="Send" size={16} />Получить код</>}
+              </button>
             </div>
-          )}
-          <div className="relative">
-            <div className="absolute left-4 top-1/2 -translate-y-1/2">
-              <Icon name="Phone" size={16} className="text-muted-foreground" />
+          </>
+        ) : (
+          /* ── Шаг 2: ввод OTP ── */
+          <div className="animate-fade-in space-y-5">
+            <div className="text-center space-y-1">
+              <div className="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-br from-blue-600 to-cyan-500 flex items-center justify-center mb-3 shadow-[0_0_30px_rgba(0,180,230,0.4)]">
+                <Icon name={contactType === "email" ? "Mail" : "MessageSquare"} size={26} className="text-white" />
+              </div>
+              <h2 className="font-golos font-bold text-xl text-foreground">Введите код</h2>
+              <p className="text-sm text-muted-foreground">
+                Отправили 6-значный код на<br />
+                <span className="text-sky-400 font-medium">{contact}</span>
+              </p>
             </div>
-            <input value={phone} onChange={e => setPhone(e.target.value)} placeholder="+7 999 000-00-00" type="tel"
-              className="w-full bg-secondary/60 border border-white/10 rounded-2xl pl-11 pr-4 py-3.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 focus:bg-secondary transition-all" />
-          </div>
-          <div className="relative">
-            <div className="absolute left-4 top-1/2 -translate-y-1/2">
-              <Icon name="Lock" size={16} className="text-muted-foreground" />
+
+            {/* Dev-mode код */}
+            {devCode && (
+              <div className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 animate-fade-in">
+                <Icon name="Code2" size={14} className="text-amber-400 flex-shrink-0" />
+                <span className="text-xs text-amber-300">Тестовый режим. Код: <strong className="font-mono text-amber-200">{devCode}</strong></span>
+              </div>
+            )}
+
+            {/* OTP поля */}
+            <div className="flex gap-2 justify-center">
+              {[0,1,2,3,4,5].map(i => (
+                <input key={i}
+                  ref={otpRefs[i]}
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={otp[i] || ""}
+                  onChange={e => handleOtpInput(e.target.value, i)}
+                  onKeyDown={e => handleOtpKey(e, i)}
+                  onFocus={e => e.target.select()}
+                  className={`w-11 h-14 text-center text-xl font-bold rounded-2xl border transition-all
+                    bg-secondary/60 text-foreground
+                    ${otp[i] ? "border-sky-500 bg-sky-500/10 shadow-[0_0_12px_rgba(14,165,233,0.3)]" : "border-white/10"}
+                    focus:outline-none focus:border-sky-500 focus:bg-sky-500/10`}
+                />
+              ))}
             </div>
-            <input value={password} onChange={e => setPassword(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && submit()}
-              placeholder="Пароль" type={showPass ? "text" : "password"}
-              className="w-full bg-secondary/60 border border-white/10 rounded-2xl pl-11 pr-12 py-3.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 focus:bg-secondary transition-all" />
-            <button onClick={() => setShowPass(!showPass)}
-              className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
-              <Icon name={showPass ? "EyeOff" : "Eye"} size={16} />
+
+            {error && (
+              <div className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-red-500/10 border border-red-500/20 animate-fade-in">
+                <Icon name="AlertCircle" size={14} className="text-red-400 flex-shrink-0" />
+                <span className="text-xs text-red-300">{error}</span>
+              </div>
+            )}
+
+            <button onClick={verifyCode} disabled={loading || otp.length < 6}
+              className="w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 to-blue-700 text-white font-golos font-semibold text-base hover:opacity-90 active:scale-[0.98] transition-all shadow-[0_0_30px_rgba(0,180,230,0.4)] disabled:opacity-50 flex items-center justify-center gap-2">
+              {loading
+                ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />Проверяем...</>
+                : <><Icon name="CheckCircle" size={16} />{mode === "register" ? "Создать аккаунт" : "Войти"}</>}
             </button>
-          </div>
 
-          {error && (
-            <div className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-red-500/10 border border-red-500/20 animate-fade-in">
-              <Icon name="AlertCircle" size={14} className="text-red-400 flex-shrink-0" />
-              <span className="text-xs text-red-300">{error}</span>
+            <div className="flex items-center justify-between text-sm">
+              <button onClick={reset} className="text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5">
+                <Icon name="ArrowLeft" size={14} />Назад
+              </button>
+              {resendTimer > 0
+                ? <span className="text-muted-foreground">Повторно через {resendTimer}с</span>
+                : <button onClick={sendCode} disabled={loading}
+                    className="text-sky-400 hover:text-sky-300 font-medium transition-colors">
+                    Отправить снова
+                  </button>
+              }
             </div>
-          )}
+          </div>
+        )}
 
-          <button onClick={submit} disabled={loading}
-            className="w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 to-blue-700 text-white font-golos font-semibold text-base hover:opacity-90 active:scale-[0.98] transition-all shadow-[0_0_30px_rgba(0,180,230,0.4)] disabled:opacity-60 disabled:cursor-not-allowed mt-2">
-            {loading ? (
-              <span className="flex items-center justify-center gap-2">
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                {mode === "register" ? "Создаём аккаунт..." : "Входим..."}
-              </span>
-            ) : mode === "register" ? "Создать аккаунт" : "Войти"}
-          </button>
-        </div>
-
-        <p className="text-center text-xs text-muted-foreground mt-6 animate-fade-in" style={{ animationDelay: "0.2s" }}>
+        <p className="text-center text-xs text-muted-foreground mt-5 animate-fade-in" style={{ animationDelay: "0.2s" }}>
           Продолжая, вы соглашаетесь с условиями использования
         </p>
       </div>
