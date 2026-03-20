@@ -542,16 +542,42 @@ def handler(event: dict, context) -> dict:
         # POST /upload — загрузить файл в S3
         if method == "POST" and "upload" in path:
             body = json.loads(event.get("body") or "{}")
-            file_b64 = body.get("file")
-            file_name = body.get("file_name", "file")
-            file_type = body.get("file_type", "application/octet-stream")
+            # Поддерживаем оба ключа: "file" и "file_data" (для голосовых)
+            file_b64 = body.get("file") or body.get("file_data")
+            file_name = (body.get("file_name") or "file").strip()
+            file_type = body.get("file_type") or "application/octet-stream"
+
             if not file_b64:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "file required"})}
 
             file_data = base64.b64decode(file_b64)
             file_size = len(file_data)
-            ext = mimetypes.guess_extension(file_type) or ""
-            key = f"chat-files/{uuid.uuid4().hex}{ext}"
+
+            # Лимит 25 МБ
+            if file_size > 25 * 1024 * 1024:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Файл слишком большой (макс. 25 МБ)"})}
+
+            # Безопасное имя файла
+            import re as _re
+            safe_name = _re.sub(r'[^\w.\-]', '_', file_name)[:200] or "file"
+
+            # Правильное расширение по MIME
+            MIME_EXT = {
+                "image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif",
+                "image/webp": ".webp", "image/heic": ".heic",
+                "video/mp4": ".mp4", "video/webm": ".webm", "video/quicktime": ".mov",
+                "audio/webm": ".webm", "audio/ogg": ".ogg", "audio/mpeg": ".mp3",
+                "audio/mp4": ".m4a", "audio/wav": ".wav",
+                "application/pdf": ".pdf",
+            }
+            ext = MIME_EXT.get(file_type) or mimetypes.guess_extension(file_type) or ""
+            # Если в имени уже есть расширение — не дублируем
+            if not safe_name.lower().endswith(ext.lower()):
+                key_name = f"{uuid.uuid4().hex}{ext}"
+            else:
+                key_name = f"{uuid.uuid4().hex}_{safe_name}"
+
+            key = f"chat-files/{key_name}"
 
             s3 = boto3.client(
                 "s3",
@@ -559,14 +585,18 @@ def handler(event: dict, context) -> dict:
                 aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
                 aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
             )
-            s3.put_object(Bucket="files", Key=key, Body=file_data, ContentType=file_type)
+            s3.put_object(
+                Bucket="files", Key=key, Body=file_data,
+                ContentType=file_type,
+                Metadata={"original-name": safe_name},
+            )
             cdn_url = f"https://cdn.poehali.dev/projects/{os.environ['AWS_ACCESS_KEY_ID']}/bucket/{key}"
 
             return {
                 "statusCode": 200, "headers": cors,
                 "body": json.dumps({
-                    "file_url": cdn_url,
-                    "file_name": file_name,
+                    "file_url": cdn_url, "url": cdn_url,
+                    "file_name": safe_name,
                     "file_size": file_size,
                     "file_type": file_type,
                 })

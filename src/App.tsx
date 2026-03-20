@@ -312,6 +312,8 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
   const [statsLoading, setStatsLoading] = useState(false);
   const [pendingFile, setPendingFile] = useState<{ url: string; name: string; size: number; type: string } | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [pickerMsgId, setPickerMsgId] = useState<number | string | null>(null);
   const [menuMsgId, setMenuMsgId] = useState<number | string | null>(null);
   const [editingMsg, setEditingMsg] = useState<{ id: number | string; text: string } | null>(null);
@@ -715,6 +717,13 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = "";
+    setUploadError(null);
+
+    if (file.size > 25 * 1024 * 1024) {
+      setUploadError("Файл слишком большой. Максимум 25 МБ");
+      return;
+    }
+
     setUploading(true);
     try {
       const b64 = await new Promise<string>((resolve, reject) => {
@@ -729,9 +738,15 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
       });
       const data = await res.json();
       if (data.file_url) {
-        setPendingFile({ url: data.file_url, name: data.file_name, size: data.file_size, type: data.file_type });
+        setPendingFile({ url: data.file_url, name: data.file_name ?? file.name, size: data.file_size ?? file.size, type: data.file_type ?? file.type });
+      } else {
+        setUploadError(data.error || "Не удалось загрузить файл");
       }
-    } finally { setUploading(false); }
+    } catch {
+      setUploadError("Ошибка сети при загрузке файла");
+    } finally {
+      setUploading(false);
+    }
   }
 
   const searchMatches = searchQuery.trim()
@@ -1209,13 +1224,36 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
                   </button>
                 )}
                 {/* File attachment */}
+                {/* Изображения */}
                 {msg.file_url && msg.file_type?.startsWith("image/") && (
-                  <a href={msg.file_url} target="_blank" rel="noopener noreferrer"
-                    className="block mb-1.5 rounded-xl overflow-hidden border border-white/10 max-w-[220px]">
-                    <img src={msg.file_url} alt={msg.file_name || "фото"}
-                      className="w-full object-cover max-h-48 hover:opacity-90 transition-opacity" />
-                  </a>
+                  <div className="mb-1.5 relative group/img max-w-[240px]">
+                    <button onClick={() => setLightboxUrl(msg.file_url!)}
+                      className="block rounded-xl overflow-hidden border border-white/10 w-full">
+                      <img src={msg.file_url} alt={msg.file_name || "фото"}
+                        className="w-full object-cover max-h-56 hover:opacity-90 transition-opacity"
+                        loading="lazy" />
+                    </button>
+                    <a href={msg.file_url} download={msg.file_name || "photo"}
+                      onClick={e => e.stopPropagation()}
+                      className="absolute top-2 right-2 p-1.5 rounded-full bg-black/60 opacity-0 group-hover/img:opacity-100 transition-opacity hover:bg-black/80">
+                      <Icon name="Download" size={13} className="text-white" />
+                    </a>
+                  </div>
                 )}
+                {/* Видео */}
+                {msg.file_url && msg.file_type?.startsWith("video/") && (
+                  <div className="mb-1.5 relative group/vid max-w-[260px]">
+                    <video src={msg.file_url} controls preload="metadata"
+                      className="w-full rounded-xl border border-white/10 max-h-48 bg-black"
+                      playsInline />
+                    <a href={msg.file_url} download={msg.file_name || "video"}
+                      onClick={e => e.stopPropagation()}
+                      className="absolute top-2 right-2 p-1.5 rounded-full bg-black/60 opacity-0 group-hover/vid:opacity-100 transition-opacity hover:bg-black/80">
+                      <Icon name="Download" size={13} className="text-white" />
+                    </a>
+                  </div>
+                )}
+                {/* Аудио / голосовые */}
                 {msg.file_url && msg.file_type?.startsWith("audio/") && (
                   <div className="flex items-center gap-2.5 mb-1.5 px-3 py-2.5 rounded-xl bg-black/20 border border-white/10 max-w-[260px] min-w-[200px]">
                     <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-colors ${msg.is_read || msg.out ? "bg-sky-500/20" : "bg-amber-500/20"}`}>
@@ -1227,34 +1265,33 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
                         style={{ filter: "invert(0.8) sepia(1) saturate(2) hue-rotate(185deg)" }}
                         onPlay={() => {
                           if (!msg.out && !msg.is_read && typeof msg.id === "number") {
-                            fetch(`${CHATS_URL}/read`, {
-                              method: "POST", headers: apiHeaders(token),
-                              body: JSON.stringify({ message_id: msg.id }),
-                            }).then(() => {
-                              setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, is_read: true } : m));
-                              onMessageRead?.();
-                            });
+                            fetch(`${CHATS_URL}/read`, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ message_id: msg.id }) })
+                              .then(() => { setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, is_read: true } : m)); onMessageRead?.(); });
                           }
                         }} />
                     </div>
-                    {msg.file_size && (
-                      <span className="text-[10px] text-white/40 flex-shrink-0">{(msg.file_size / 1024).toFixed(0)}кб</span>
-                    )}
+                    <div className="flex flex-col items-center gap-1 flex-shrink-0">
+                      {msg.file_size && <span className="text-[10px] text-white/40">{(msg.file_size / 1024).toFixed(0)}кб</span>}
+                      <a href={msg.file_url} download={msg.file_name || "voice"} className="p-1 hover:bg-white/10 rounded-full transition-colors">
+                        <Icon name="Download" size={12} className="text-white/50" />
+                      </a>
+                    </div>
                   </div>
                 )}
-                {msg.file_url && !msg.file_type?.startsWith("image/") && !msg.file_type?.startsWith("audio/") && (
-                  <a href={msg.file_url} target="_blank" rel="noopener noreferrer" download={msg.file_name || true}
+                {/* Документы и прочие файлы */}
+                {msg.file_url && !msg.file_type?.startsWith("image/") && !msg.file_type?.startsWith("audio/") && !msg.file_type?.startsWith("video/") && (
+                  <a href={msg.file_url} download={msg.file_name || "file"}
                     className="flex items-center gap-2.5 mb-1.5 px-3 py-2.5 rounded-xl bg-black/20 hover:bg-black/30 transition-colors border border-white/10 max-w-[240px]">
                     <div className="w-8 h-8 rounded-lg bg-sky-500/20 flex items-center justify-center flex-shrink-0">
-                      <Icon name="FileDown" size={15} className="text-sky-400" />
+                      <Icon name={msg.file_type?.includes("pdf") ? "FileText" : msg.file_type?.includes("zip") ? "Archive" : "File"} size={15} className="text-sky-400" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-medium text-white truncate">{msg.file_name || "Файл"}</p>
-                      {msg.file_size && (
-                        <p className="text-[10px] text-white/50">{(msg.file_size / 1024).toFixed(1)} КБ</p>
-                      )}
+                      <p className="text-[10px] text-white/50">
+                        {msg.file_size ? (msg.file_size > 1024 * 1024 ? `${(msg.file_size / 1024 / 1024).toFixed(1)} МБ` : `${(msg.file_size / 1024).toFixed(0)} КБ`) : ""}
+                      </p>
                     </div>
-                    <Icon name="Download" size={13} className="text-white/50 flex-shrink-0" />
+                    <Icon name="Download" size={14} className="text-sky-400 flex-shrink-0" />
                   </a>
                 )}
                 {msg.is_deleted
@@ -1424,20 +1461,40 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
             </button>
           </div>
         )}
+        {/* Ошибка загрузки */}
+        {uploadError && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-500/10 border border-red-500/20 animate-fade-in">
+            <Icon name="AlertCircle" size={14} className="text-red-400 flex-shrink-0" />
+            <p className="text-xs text-red-300 flex-1">{uploadError}</p>
+            <button onClick={() => setUploadError(null)} className="p-0.5 hover:bg-white/10 rounded-full transition-colors">
+              <Icon name="X" size={12} className="text-red-400" />
+            </button>
+          </div>
+        )}
         {/* Pending file preview */}
         {pendingFile && (
           <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-blue-500/10 border border-blue-500/20 animate-fade-in">
             {pendingFile.type.startsWith("image/") ? (
               <img src={pendingFile.url} alt={pendingFile.name}
-                className="w-10 h-10 rounded-lg object-cover flex-shrink-0 border border-white/10" />
+                className="w-12 h-12 rounded-lg object-cover flex-shrink-0 border border-white/10" />
+            ) : pendingFile.type.startsWith("video/") ? (
+              <div className="w-12 h-12 rounded-lg bg-purple-500/20 flex items-center justify-center flex-shrink-0">
+                <Icon name="Video" size={20} className="text-purple-400" />
+              </div>
+            ) : pendingFile.type.startsWith("audio/") ? (
+              <div className="w-12 h-12 rounded-lg bg-sky-500/20 flex items-center justify-center flex-shrink-0">
+                <Icon name="Music" size={20} className="text-sky-400" />
+              </div>
             ) : (
-              <div className="w-10 h-10 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0">
-                <Icon name="FileText" size={18} className="text-blue-400" />
+              <div className="w-12 h-12 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0">
+                <Icon name="FileText" size={20} className="text-blue-400" />
               </div>
             )}
             <div className="flex-1 min-w-0">
               <p className="text-xs font-medium text-foreground truncate">{pendingFile.name}</p>
-              <p className="text-[10px] text-muted-foreground">{(pendingFile.size / 1024).toFixed(1)} КБ</p>
+              <p className="text-[10px] text-muted-foreground">
+                {pendingFile.size > 1024 * 1024 ? `${(pendingFile.size / 1024 / 1024).toFixed(1)} МБ` : `${(pendingFile.size / 1024).toFixed(0)} КБ`}
+              </p>
             </div>
             <button onClick={() => setPendingFile(null)}
               className="p-1 rounded-full hover:bg-white/10 transition-colors flex-shrink-0">
@@ -1461,7 +1518,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
 
         <div className="flex items-end gap-2">
           <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileSelect}
-            accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.zip,.txt,.mp4,.mp3" />
+            accept="image/*,video/*,audio/*,application/pdf,.doc,.docx,.xls,.xlsx,.zip,.txt,.mp4,.mp3,.mov,.webm" />
           {!isRecording && (
             <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
               className={`p-2 rounded-full transition-all flex-shrink-0 ${uploading ? "opacity-50" : "hover:bg-white/10"}`}>
@@ -1549,6 +1606,29 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
                   </button>
                 );
               })}
+          </div>
+        </div>
+      )}
+
+      {/* Лайтбокс для просмотра фото */}
+      {lightboxUrl && (
+        <div className="fixed inset-0 z-50 bg-black/95 flex flex-col animate-fade-in"
+          onClick={() => setLightboxUrl(null)}>
+          <div className="flex items-center justify-between px-4 py-3 flex-shrink-0">
+            <button onClick={() => setLightboxUrl(null)} className="p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors">
+              <Icon name="X" size={20} className="text-white" />
+            </button>
+            <a href={lightboxUrl} download
+              onClick={e => e.stopPropagation()}
+              className="flex items-center gap-2 px-4 py-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors text-white text-sm font-medium">
+              <Icon name="Download" size={16} />
+              Сохранить
+            </a>
+          </div>
+          <div className="flex-1 flex items-center justify-center p-4 overflow-hidden">
+            <img src={lightboxUrl} alt="фото"
+              className="max-w-full max-h-full object-contain rounded-lg select-none"
+              onClick={e => e.stopPropagation()} />
           </div>
         </div>
       )}
