@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Каспер</string>
+    <string name="title_activity_main">Каспер</string>
+    <string name="package_name">dev.poehali.kasper</string>
+    <string name="custom_url_scheme">dev.poehali.kasper</string>
+</resources>
