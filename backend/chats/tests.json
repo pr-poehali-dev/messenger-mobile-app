@@ -21,6 +21,14 @@
       "path": "/",
       "expectedStatus": 401,
       "bodyMatcher": "partial"
+    },
+    {
+      "name": "Mute chat - no auth",
+      "method": "POST",
+      "path": "/mute-chat",
+      "body": {},
+      "expectedStatus": 400,
+      "bodyMatcher": "partial"
     }
   ]
 }

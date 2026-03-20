@@ -107,7 +107,8 @@ def handler(event: dict, context) -> dict:
                         c.description,
                         c.avatar_url,
                         COALESCE(c.is_public, FALSE) AS is_public,
-                        COALESCE(cm.can_post, FALSE) AS can_post
+                        COALESCE(cm.can_post, FALSE) AS can_post,
+                        COALESCE(cm.muted, FALSE) AS muted
                     FROM {SCHEMA}.chats c
                     JOIN {SCHEMA}.chat_members cm ON cm.chat_id = c.id AND cm.user_id = %s AND cm.hidden = FALSE
                     LEFT JOIN LATERAL (
@@ -155,6 +156,7 @@ def handler(event: dict, context) -> dict:
                         "avatar_url": r[13],
                         "is_public": bool(r[14]),
                         "can_post": bool(r[15]),
+                        "muted": bool(r[16]),
                     })
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"chats": chats})}
 
@@ -894,6 +896,21 @@ def handler(event: dict, context) -> dict:
                 """, (pin, chat_id, user_id))
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "pinned": pin})}
+
+        # POST /mute-chat — отключить / включить уведомления для чата
+        if method == "POST" and "mute-chat" in path:
+            body = json.loads(event.get("body") or "{}")
+            chat_id = body.get("chat_id")
+            mute = body.get("mute", True)
+            if not chat_id:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id обязателен"})}
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    UPDATE {SCHEMA}.chat_members SET muted = %s
+                    WHERE chat_id = %s AND user_id = %s
+                """, (mute, chat_id, user_id))
+            conn.commit()
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "muted": mute})}
 
         # POST /hide-chat — скрыть личный чат для себя (мягкое удаление)
         if method == "POST" and "hide-chat" in path:

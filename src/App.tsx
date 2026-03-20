@@ -66,6 +66,7 @@ interface Chat {
   member_count?: number;
   online?: boolean;
   pinned?: boolean;
+  muted?: boolean;
   peer_online?: boolean;
   peer_last_seen?: string | null;
   peer_id?: number | null;
@@ -1961,6 +1962,16 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: stri
     setContextChat(null);
   }
 
+  async function toggleMute(chat: Chat) {
+    const muted = !chat.muted;
+    setChats(prev => prev.map(c => c.id === chat.id ? { ...c, muted } : c));
+    await fetch(`${CHATS_URL}/mute-chat`, {
+      method: "POST", headers: apiHeaders(token),
+      body: JSON.stringify({ chat_id: chat.id, mute: muted }),
+    });
+    setContextChat(null);
+  }
+
   async function deleteChat(chat: Chat) {
     setContextChat(null);
     if (chat.is_group) {
@@ -2255,8 +2266,9 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: stri
                     {chat.is_channel && chat.is_public && <Icon name="Globe" size={10} className="text-purple-400 flex-shrink-0" />}
                   </div>
                   <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                    {chat.muted && <Icon name="BellOff" size={11} className="text-muted-foreground" />}
                     {chat.pinned && <Icon name="Pin" size={11} className="text-sky-400" />}
-                    <span className={`text-[11px] ${chat.unread > 0 ? "text-sky-400" : "text-muted-foreground"}`}>{relTime}</span>
+                    <span className={`text-[11px] ${chat.unread > 0 && !chat.muted ? "text-sky-400" : "text-muted-foreground"}`}>{relTime}</span>
                   </div>
                 </div>
                 <div className="flex items-center justify-between mt-0.5">
@@ -2264,7 +2276,7 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: stri
                     {chat.last_msg || (chat.is_channel && chat.description ? chat.description : "Нет сообщений")}
                   </span>
                   {chat.unread > 0 && (
-                    <span className="flex-shrink-0 ml-2 min-w-[20px] h-5 px-1.5 rounded-full bg-gradient-to-r from-blue-600 to-blue-700 text-white text-[10px] font-bold flex items-center justify-center">
+                    <span className={`flex-shrink-0 ml-2 min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center ${chat.muted ? "bg-white/10 text-muted-foreground" : "bg-gradient-to-r from-blue-600 to-blue-700 text-white"}`}>
                       {chat.unread}
                     </span>
                   )}
@@ -2285,10 +2297,15 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: stri
               <AvatarEl name={contextChat.name} size="sm" />
               <span className="font-golos font-semibold text-foreground text-sm truncate">{contextChat.name}</span>
             </div>
-                  <button onClick={() => togglePin(contextChat)}
+            <button onClick={() => togglePin(contextChat)}
               className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-white/5 transition-colors">
               <Icon name={contextChat.pinned ? "PinOff" : "Pin"} size={18} className="text-sky-400" />
               <span className="text-sm text-foreground">{contextChat.pinned ? "Открепить" : "Закрепить"}</span>
+            </button>
+            <button onClick={() => toggleMute(contextChat)}
+              className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-white/5 transition-colors border-t border-white/5">
+              <Icon name={contextChat.muted ? "Bell" : "BellOff"} size={18} className="text-amber-400" />
+              <span className="text-sm text-foreground">{contextChat.muted ? "Включить уведомления" : "Отключить уведомления"}</span>
             </button>
             <button onClick={() => deleteChat(contextChat)}
               className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-red-500/10 transition-colors border-t border-white/5">
