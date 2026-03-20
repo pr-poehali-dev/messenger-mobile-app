@@ -165,14 +165,25 @@
     background-clip: text;
   }
 
+  @keyframes kasper-glow {
+    0%,
+    100% {
+      filter: drop-shadow(0 0 10px rgba(56, 217, 245, 0.5))
+        drop-shadow(0 0 25px rgba(0, 180, 230, 0.3));
+    }
+    50% {
+      filter: drop-shadow(0 0 22px rgba(56, 217, 245, 1))
+        drop-shadow(0 0 50px rgba(0, 180, 230, 0.7));
+    }
+  }
+
   .kasper-title {
     background: linear-gradient(135deg, #ffffff 0%, #a8d8f0 40%, #38d9f5 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
-    filter: drop-shadow(0 0 18px rgba(56, 217, 245, 0.85))
-      drop-shadow(0 0 40px rgba(0, 180, 230, 0.5));
-    letter-spacing: 0.15em;
+    letter-spacing: -0.02em;
+    animation: kasper-glow 2.8s ease-in-out infinite;
   }
 
   .text-gradient-warm {
