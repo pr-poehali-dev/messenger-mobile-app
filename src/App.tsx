@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import Icon from "@/components/ui/icon";
 
 // ─── API Config ───────────────────────────────────────────────────────────────
@@ -24,6 +24,7 @@ interface User {
   phone: string;
   bio?: string;
   status?: string;
+  avatar_url?: string | null;
 }
 
 interface Reaction { emoji: string; count: number; i_reacted: boolean; }
@@ -105,15 +106,18 @@ function getAvatarColor(name: string): string {
   return AVATAR_COLORS[h % AVATAR_COLORS.length];
 }
 
-function AvatarEl({ name, size = "md", status }: {
-  name: string; size?: "xs" | "sm" | "md" | "lg" | "xl"; status?: string;
+function AvatarEl({ name, size = "md", status, avatarUrl }: {
+  name: string; size?: "xs" | "sm" | "md" | "lg" | "xl"; status?: string; avatarUrl?: string | null;
 }) {
   const sizes = { xs: "w-8 h-8 text-xs", sm: "w-10 h-10 text-xs", md: "w-12 h-12 text-sm", lg: "w-14 h-14 text-base", xl: "w-20 h-20 text-xl" };
   return (
     <div className="relative flex-shrink-0">
-      <div className={`rounded-full bg-gradient-to-br ${getAvatarColor(name)} flex items-center justify-center font-golos font-bold text-white ${sizes[size]}`}>
-        {(name || "?").slice(0, 2).toUpperCase()}
-      </div>
+      {avatarUrl
+        ? <img src={avatarUrl} alt={name} className={`rounded-full object-cover ${sizes[size]}`} />
+        : <div className={`rounded-full bg-gradient-to-br ${getAvatarColor(name)} flex items-center justify-center font-golos font-bold text-white ${sizes[size]}`}>
+            {(name || "?").slice(0, 2).toUpperCase()}
+          </div>
+      }
       {status && (
         <div className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-background
           ${status === "online" ? "status-online" : status === "away" ? "status-away" : "status-offline"}`} />
@@ -2462,6 +2466,26 @@ function ProfileTab({ user, token, onLogout, onUserUpdate, onDeleteAccount }: {
   const [pwSaved, setPwSaved] = useState(false);
   const [showCur, setShowCur] = useState(false);
   const [showNew, setShowNew] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+
+  async function uploadAvatar(file: File) {
+    setUploadingAvatar(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const dataUrl = e.target?.result as string;
+        const res = await fetch(`${AUTH_URL}/upload-avatar`, {
+          method: "POST", headers: apiHeaders(token),
+          body: JSON.stringify({ image: dataUrl }),
+        });
+        const data = await res.json();
+        if (data.user) { onUserUpdate(data.user); setSaved(true); setTimeout(() => setSaved(false), 2000); }
+        setUploadingAvatar(false);
+      };
+      reader.readAsDataURL(file);
+    } catch { setUploadingAvatar(false); }
+  }
 
   function startEdit() { setName(user.name); setBio(user.bio ?? ""); setError(""); setEditing(true); }
   function cancelEdit() { setEditing(false); setError(""); }
@@ -2531,10 +2555,20 @@ function ProfileTab({ user, token, onLogout, onUserUpdate, onDeleteAccount }: {
         </div>
         <div className="relative z-10">
           <div className="flex justify-center mb-4">
-            <div className="p-0.5 rounded-full bg-gradient-to-br from-blue-500 to-cyan-400 shadow-[0_0_30px_rgba(0,180,230,0.5)]">
-              <div className="p-0.5 rounded-full bg-background">
-                <AvatarEl name={user.name} size="xl" />
+            <div className="relative group">
+              <div className="p-0.5 rounded-full bg-gradient-to-br from-blue-500 to-cyan-400 shadow-[0_0_30px_rgba(0,180,230,0.5)]">
+                <div className="p-0.5 rounded-full bg-background">
+                  <AvatarEl name={user.name} size="xl" avatarUrl={user.avatar_url} />
+                </div>
               </div>
+              <button onClick={() => avatarInputRef.current?.click()}
+                className="absolute inset-0 rounded-full flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity">
+                {uploadingAvatar
+                  ? <div className="w-6 h-6 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                  : <Icon name="Camera" size={22} className="text-white" />}
+              </button>
+              <input ref={avatarInputRef} type="file" accept="image/*" className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) uploadAvatar(f); e.target.value = ""; }} />
             </div>
           </div>
           <h2 className="text-2xl font-golos font-black text-foreground mb-1">{user.name}</h2>
@@ -3153,65 +3187,287 @@ function StatusTab({ user }: { user: User }) {
   );
 }
 
-function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (userId: number, userName: string) => void; onOpenChat?: (userId: number) => void }) {
-  const [users, setUsers] = useState<{ id: number; name: string; phone: string; status: string }[]>([]);
-  const [search, setSearch] = useState("");
-  const [loading, setLoading] = useState(false);
+interface Contact {
+  id: number;
+  name: string;
+  phone: string;
+  user_id: number | null;
+  status: string | null;
+  avatar_url: string | null;
+}
 
-  async function searchUsers(q: string) {
-    if (!q.trim()) { setUsers([]); return; }
+function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (userId: number, userName: string) => void; onOpenChat?: (userId: number) => void }) {
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [syncDone, setSyncDone] = useState<number | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [addName, setAddName] = useState("");
+  const [addPhone, setAddPhone] = useState("");
+  const [addLoading, setAddLoading] = useState(false);
+  const [addError, setAddError] = useState("");
+  const [tab, setTab] = useState<"my" | "search">("my");
+  const [searchUsers, setSearchUsers] = useState<{ id: number; name: string; phone: string; status: string }[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchQ, setSearchQ] = useState("");
+
+  useEffect(() => { loadContacts(); }, []);
+
+  async function loadContacts() {
     setLoading(true);
+    try {
+      const res = await fetch(`${AUTH_URL}/contacts`, { headers: apiHeaders(token) });
+      const data = await res.json();
+      if (data.contacts) setContacts(data.contacts.filter((c: Contact) => c.name !== "[удалён]" && c.phone));
+    } finally { setLoading(false); }
+  }
+
+  async function syncPhonebook() {
+    if (!("contacts" in navigator)) {
+      alert("Ваш браузер не поддерживает доступ к телефонной книге. Попробуйте в Chrome на Android.");
+      return;
+    }
+    setSyncing(true);
+    try {
+      // @ts-expect-error — Contact Picker API
+      const raw = await navigator.contacts.select(["name", "tel"], { multiple: true });
+      const entries: { name: string; phone: string }[] = [];
+      for (const c of raw) {
+        const name = (c.name && c.name[0]) || "Без имени";
+        for (const tel of (c.tel || [])) {
+          const phone = tel.replace(/\s+/g, "").replace(/[^+\d]/g, "");
+          if (phone) entries.push({ name, phone });
+        }
+      }
+      if (!entries.length) { setSyncing(false); return; }
+      const res = await fetch(`${AUTH_URL}/contacts/sync`, {
+        method: "POST", headers: apiHeaders(token),
+        body: JSON.stringify({ contacts: entries }),
+      });
+      const data = await res.json();
+      setSyncDone(data.synced ?? 0);
+      setTimeout(() => setSyncDone(null), 3000);
+      await loadContacts();
+    } finally { setSyncing(false); }
+  }
+
+  async function addContact() {
+    if (!addName.trim() || !addPhone.trim()) { setAddError("Заполните имя и номер"); return; }
+    setAddLoading(true); setAddError("");
+    try {
+      const res = await fetch(`${AUTH_URL}/contacts/add`, {
+        method: "POST", headers: apiHeaders(token),
+        body: JSON.stringify({ name: addName.trim(), phone: addPhone.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setAddError(data.error || "Ошибка"); return; }
+      setContacts(prev => {
+        const exists = prev.findIndex(c => c.id === data.contact.id);
+        if (exists >= 0) { const n = [...prev]; n[exists] = data.contact; return n; }
+        return [data.contact, ...prev];
+      });
+      setShowAdd(false); setAddName(""); setAddPhone("");
+    } finally { setAddLoading(false); }
+  }
+
+  async function removeContact(id: number) {
+    await fetch(`${AUTH_URL}/contacts/remove`, {
+      method: "POST", headers: apiHeaders(token),
+      body: JSON.stringify({ contact_id: id }),
+    });
+    setContacts(prev => prev.filter(c => c.id !== id));
+  }
+
+  async function doSearch(q: string) {
+    setSearchQ(q);
+    if (!q.trim()) { setSearchUsers([]); return; }
+    setSearchLoading(true);
     try {
       const res = await fetch(`${CHATS_URL}/users?q=${encodeURIComponent(q)}`, { headers: apiHeaders(token) });
       const data = await res.json();
-      if (data.users) setUsers(data.users);
-    } finally { setLoading(false); }
+      if (data.users) setSearchUsers(data.users);
+    } finally { setSearchLoading(false); }
+  }
+
+  const filtered = contacts.filter(c =>
+    c.name.toLowerCase().includes(search.toLowerCase()) ||
+    c.phone.includes(search)
+  );
+
+  const grouped: Record<string, Contact[]> = {};
+  for (const c of filtered) {
+    const letter = c.name[0]?.toUpperCase() || "#";
+    if (!grouped[letter]) grouped[letter] = [];
+    grouped[letter].push(c);
   }
 
   return (
     <div className="flex flex-col h-full">
+      {/* Header */}
       <div className="px-4 pt-4 pb-3">
-        <h1 className="text-2xl font-golos font-black text-gradient mb-4">Контакты</h1>
+        <div className="flex items-center justify-between mb-3">
+          <h1 className="text-2xl font-golos font-black text-gradient">Контакты</h1>
+          <div className="flex gap-1.5">
+            <button onClick={syncPhonebook} disabled={syncing}
+              className="p-2 hover:bg-white/10 rounded-xl transition-colors flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
+              {syncing
+                ? <div className="w-4 h-4 border-2 border-sky-500/40 border-t-sky-500 rounded-full animate-spin" />
+                : <Icon name="RefreshCw" size={16} className="text-sky-400" />}
+            </button>
+            <button onClick={() => { setShowAdd(true); setAddError(""); }}
+              className="p-2 hover:bg-white/10 rounded-xl transition-colors">
+              <Icon name="UserPlus" size={16} className="text-cyan-400" />
+            </button>
+          </div>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex gap-1 p-1 bg-secondary/40 rounded-2xl mb-3">
+          {([["my", "Мои"], ["search", "Поиск"]] as const).map(([key, label]) => (
+            <button key={key} onClick={() => setTab(key)}
+              className={`flex-1 py-1.5 text-sm font-medium rounded-xl transition-all ${tab === key ? "bg-blue-600 text-white" : "text-muted-foreground hover:text-foreground"}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+
         <div className="relative">
           <Icon name="Search" size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <input value={search} onChange={e => { setSearch(e.target.value); searchUsers(e.target.value); }}
-            placeholder="Поиск по имени или номеру..."
-            className="w-full bg-secondary/60 border border-white/10 rounded-2xl pl-9 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 transition-all" />
+          {tab === "my"
+            ? <input value={search} onChange={e => setSearch(e.target.value)}
+                placeholder="Поиск в контактах..."
+                className="w-full bg-secondary/60 border border-white/10 rounded-2xl pl-9 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 transition-all" />
+            : <input value={searchQ} onChange={e => doSearch(e.target.value)}
+                placeholder="Поиск пользователей..."
+                className="w-full bg-secondary/60 border border-white/10 rounded-2xl pl-9 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 transition-all" />
+          }
         </div>
       </div>
+
+      {/* Sync banner */}
+      {syncDone !== null && (
+        <div className="mx-4 mb-2 flex items-center gap-2 px-3 py-2 rounded-xl bg-green-500/10 border border-green-500/20 animate-fade-in">
+          <Icon name="CheckCircle" size={14} className="text-green-400" />
+          <span className="text-xs text-green-300">Синхронизировано {syncDone} контактов</span>
+        </div>
+      )}
+
+      {/* Add contact form */}
+      {showAdd && (
+        <div className="mx-4 mb-3 glass rounded-3xl p-4 border border-blue-500/20 animate-fade-in space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-sky-400 uppercase tracking-wide">Новый контакт</span>
+            <button onClick={() => setShowAdd(false)} className="text-muted-foreground hover:text-foreground">
+              <Icon name="X" size={14} />
+            </button>
+          </div>
+          <div className="relative">
+            <Icon name="User" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input value={addName} onChange={e => setAddName(e.target.value)}
+              placeholder="Имя"
+              className="w-full bg-secondary/60 border border-white/10 rounded-xl pl-9 pr-4 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 transition-all" />
+          </div>
+          <div className="relative">
+            <Icon name="Phone" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input value={addPhone} onChange={e => setAddPhone(e.target.value)}
+              placeholder="+7 999 000 00 00"
+              type="tel"
+              className="w-full bg-secondary/60 border border-white/10 rounded-xl pl-9 pr-4 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 transition-all" />
+          </div>
+          {addError && <p className="text-xs text-red-400">{addError}</p>}
+          <button onClick={addContact} disabled={addLoading}
+            className="w-full py-2 rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm font-semibold hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-60 flex items-center justify-center gap-2">
+            {addLoading ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : "Добавить"}
+          </button>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto">
-        {!search && (
-          <div className="flex flex-col items-center justify-center h-full gap-4 px-8 text-center">
-            <div className="w-16 h-16 rounded-3xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center">
-              <Icon name="Search" size={28} className="text-cyan-400" />
-            </div>
-            <div>
-              <p className="font-golos font-semibold text-foreground mb-1">Найти пользователей</p>
-              <p className="text-sm text-muted-foreground">Введите имя или номер телефона</p>
-            </div>
-          </div>
-        )}
-        {loading && <div className="flex justify-center py-8"><div className="w-6 h-6 border-2 border-sky-500/30 border-t-sky-500 rounded-full animate-spin" /></div>}
-        {users.map((u, i) => (
-          <div key={u.id} className="flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-all animate-fade-in"
-            style={{ animationDelay: `${i * 0.04}s` }}>
-            <AvatarEl name={u.name} size="md" status={u.status} />
-            <div className="flex-1">
-              <div className="font-golos font-semibold text-foreground text-sm">{u.name}</div>
-              <div className="text-xs text-muted-foreground">{u.phone}</div>
-            </div>
-            <div className="flex gap-1">
-              <button onClick={() => onOpenChat?.(u.id)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
-                <Icon name="MessageCircle" size={16} className="text-sky-400" />
-              </button>
-              <button onClick={() => onCall(u.id, u.name)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
-                <Icon name="Phone" size={16} className="text-cyan-400" />
-              </button>
-            </div>
-          </div>
-        ))}
-        {search && !loading && users.length === 0 && (
-          <div className="text-center py-8 text-sm text-muted-foreground">Пользователи не найдены</div>
+        {tab === "my" ? (
+          loading
+            ? <div className="flex justify-center py-12"><div className="w-6 h-6 border-2 border-sky-500/30 border-t-sky-500 rounded-full animate-spin" /></div>
+            : contacts.length === 0
+              ? (
+                <div className="flex flex-col items-center justify-center h-full gap-4 px-8 text-center">
+                  <div className="w-16 h-16 rounded-3xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center">
+                    <Icon name="Users" size={28} className="text-cyan-400" />
+                  </div>
+                  <div>
+                    <p className="font-golos font-semibold text-foreground mb-1">Нет контактов</p>
+                    <p className="text-sm text-muted-foreground">Добавьте контакт вручную или синхронизируйте с телефонной книгой</p>
+                  </div>
+                  <button onClick={syncPhonebook}
+                    className="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-500 text-white text-sm font-semibold hover:opacity-90 transition-all flex items-center gap-2">
+                    <Icon name="RefreshCw" size={14} />Синхронизировать
+                  </button>
+                </div>
+              )
+              : Object.keys(grouped).sort().map(letter => (
+                <div key={letter}>
+                  <div className="px-4 py-1 text-[11px] font-bold text-muted-foreground uppercase tracking-widest">{letter}</div>
+                  {grouped[letter].map(c => (
+                    <div key={c.id} className="flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-all group">
+                      <AvatarEl name={c.name} size="md" status={c.status ?? undefined} />
+                      <div className="flex-1 min-w-0">
+                        <div className="font-golos font-semibold text-foreground text-sm truncate">{c.name}</div>
+                        <div className="text-xs text-muted-foreground">{c.phone}</div>
+                        {c.user_id && <div className="text-[10px] text-sky-400 mt-0.5">В приложении</div>}
+                      </div>
+                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {c.user_id && (
+                          <>
+                            <button onClick={() => onOpenChat?.(c.user_id!)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+                              <Icon name="MessageCircle" size={15} className="text-sky-400" />
+                            </button>
+                            <button onClick={() => onCall(c.user_id!, c.name)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+                              <Icon name="Phone" size={15} className="text-cyan-400" />
+                            </button>
+                          </>
+                        )}
+                        <button onClick={() => removeContact(c.id)} className="p-2 hover:bg-red-500/10 rounded-full transition-colors">
+                          <Icon name="Trash2" size={15} className="text-muted-foreground hover:text-red-400 transition-colors" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))
+        ) : (
+          <>
+            {searchLoading && <div className="flex justify-center py-8"><div className="w-6 h-6 border-2 border-sky-500/30 border-t-sky-500 rounded-full animate-spin" /></div>}
+            {!searchQ && !searchLoading && (
+              <div className="flex flex-col items-center justify-center h-full gap-3 px-8 text-center">
+                <Icon name="Search" size={32} className="text-muted-foreground/50" />
+                <p className="text-sm text-muted-foreground">Введите имя или номер телефона</p>
+              </div>
+            )}
+            {searchUsers.map((u, i) => (
+              <div key={u.id} className="flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-all animate-fade-in"
+                style={{ animationDelay: `${i * 0.04}s` }}>
+                <AvatarEl name={u.name} size="md" status={u.status} />
+                <div className="flex-1 min-w-0">
+                  <div className="font-golos font-semibold text-foreground text-sm truncate">{u.name}</div>
+                  <div className="text-xs text-muted-foreground">{u.phone}</div>
+                </div>
+                <div className="flex gap-1">
+                  <button onClick={() => onOpenChat?.(u.id)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+                    <Icon name="MessageCircle" size={16} className="text-sky-400" />
+                  </button>
+                  <button onClick={() => onCall(u.id, u.name)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+                    <Icon name="Phone" size={16} className="text-cyan-400" />
+                  </button>
+                  <button onClick={() => { setAddName(u.name); setAddPhone(u.phone); setTab("my"); setShowAdd(true); }}
+                    className="p-2 hover:bg-white/10 rounded-full transition-colors">
+                    <Icon name="UserPlus" size={16} className="text-emerald-400" />
+                  </button>
+                </div>
+              </div>
+            ))}
+            {searchQ && !searchLoading && searchUsers.length === 0 && (
+              <div className="text-center py-8 text-sm text-muted-foreground">Пользователи не найдены</div>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -3225,107 +3481,454 @@ function applyTheme(isDark: boolean) {
   localStorage.setItem("pulse_theme", isDark ? "dark" : "light");
 }
 
-function SettingsTab({ onLogout, onTestSound }: { onLogout: () => void; onTestSound: () => void }) {
-  const [notif, setNotif] = useState(true);
-  const [readR, setReadR] = useState(true);
-  const [dark, setDark] = useState(() => localStorage.getItem("pulse_theme") !== "light");
-  const [notifPerm, setNotifPerm] = useState<NotificationPermission>(
-    "Notification" in window ? Notification.permission : "denied"
-  );
+type SettingsSection = "main" | "chats" | "privacy" | "notifications" | "data" | "folders" | "devices" | "language" | "policy";
 
-  function toggleDark(val: boolean) {
-    setDark(val);
-    applyTheme(val);
+function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button onClick={() => onChange(!value)}
+      className={`w-11 h-6 rounded-full transition-all duration-300 relative flex-shrink-0 ${value ? "bg-gradient-to-r from-blue-600 to-blue-700" : "bg-secondary"}`}>
+      <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all duration-300 ${value ? "left-5" : "left-0.5"}`} />
+    </button>
+  );
+}
+
+function SettingsRow({ icon, iconBg, label, value, desc, onClick, right, noBorder }: {
+  icon: string; iconBg: string; label: string; value?: string; desc?: string;
+  onClick?: () => void; right?: React.ReactNode; noBorder?: boolean;
+}) {
+  return (
+    <button onClick={onClick} className={`flex items-center gap-3 px-4 py-3.5 w-full hover:bg-white/5 transition-all ${!noBorder ? "border-b border-white/5" : ""}`}>
+      <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${iconBg}`}>
+        <Icon name={icon as Parameters<typeof Icon>[0]["name"]} size={16} className="text-white/90" />
+      </div>
+      <div className="flex-1 text-left min-w-0">
+        <div className="text-sm font-medium text-foreground">{label}</div>
+        {desc && <div className="text-xs text-muted-foreground mt-0.5">{desc}</div>}
+      </div>
+      {value && <span className="text-xs text-muted-foreground mr-1">{value}</span>}
+      {right ?? <Icon name="ChevronRight" size={15} className="text-muted-foreground flex-shrink-0" />}
+    </button>
+  );
+}
+
+function SettingsTab({ onLogout, onTestSound }: { onLogout: () => void; onTestSound: () => void }) {
+  const [section, setSection] = useState<SettingsSection>("main");
+  const [dark, setDark] = useState(() => localStorage.getItem("pulse_theme") !== "light");
+  const [notifPerm, setNotifPerm] = useState<NotificationPermission>("Notification" in window ? Notification.permission : "denied");
+
+  // Chat settings
+  const [enterSend, setEnterSend] = useState(() => localStorage.getItem("s_enter_send") !== "0");
+  const [bubbleStyle, setBubbleStyle] = useState(() => localStorage.getItem("s_bubble") || "modern");
+  const [fontSize, setFontSize] = useState(() => localStorage.getItem("s_fontsize") || "medium");
+
+  // Privacy
+  const [showPhone, setShowPhone] = useState(() => localStorage.getItem("s_show_phone") !== "0");
+  const [showOnline, setShowOnline] = useState(() => localStorage.getItem("s_show_online") !== "0");
+  const [readReceipts, setReadReceipts] = useState(() => localStorage.getItem("s_read_receipts") !== "0");
+
+  // Notifications
+  const [msgSound, setMsgSound] = useState(() => localStorage.getItem("s_msg_sound") !== "0");
+  const [groupNotif, setGroupNotif] = useState(() => localStorage.getItem("s_group_notif") !== "0");
+  const [callNotif, setCallNotif] = useState(() => localStorage.getItem("s_call_notif") !== "0");
+  const [preview, setPreview] = useState(() => localStorage.getItem("s_preview") !== "0");
+
+  // Data
+  const [autoDownload, setAutoDownload] = useState(() => localStorage.getItem("s_auto_download") !== "0");
+  const [dataSaver, setDataSaver] = useState(() => localStorage.getItem("s_data_saver") === "1");
+
+  // Folders
+  const [folders] = useState([
+    { id: 1, name: "Личные", icon: "User", count: 3 },
+    { id: 2, name: "Работа", icon: "Briefcase", count: 5 },
+    { id: 3, name: "Каналы", icon: "Radio", count: 2 },
+  ]);
+
+  function save(key: string, val: boolean | string) {
+    localStorage.setItem(key, typeof val === "boolean" ? (val ? "1" : "0") : val);
   }
+
+  function toggleDark(val: boolean) { setDark(val); applyTheme(val); }
 
   async function requestNotifPermission() {
     if (!("Notification" in window)) return;
     const perm = await Notification.requestPermission();
     setNotifPerm(perm);
-    if (perm === "granted") {
-      new Notification("Каспер", { body: "Уведомления включены! 🏠", icon: "/favicon.svg" });
-    }
+    if (perm === "granted") new Notification("Каспер", { body: "Уведомления включены!", icon: "/favicon.svg" });
   }
 
-  const sections = [
-    { title: "Уведомления", items: [
-      { icon: "Bell", label: "Push-уведомления", v: notif, set: setNotif },
-      { icon: "Volume2", label: "Звуки", v: true, set: () => {} },
-    ]},
-    { title: "Приватность", items: [
-      { icon: "Eye", label: "Уведомления о прочтении", v: readR, set: setReadR },
-    ]},
-    { title: "Оформление", items: [
-      { icon: dark ? "Moon" : "Sun", label: dark ? "Тёмная тема" : "Светлая тема", v: dark, set: toggleDark },
-    ]},
-  ];
+  if (section !== "main") {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="flex items-center gap-3 px-4 pt-4 pb-3">
+          <button onClick={() => setSection("main")} className="p-2 -ml-2 hover:bg-white/10 rounded-full transition-colors">
+            <Icon name="ArrowLeft" size={20} className="text-foreground" />
+          </button>
+          <h1 className="text-xl font-golos font-black text-foreground">
+            {section === "chats" ? "Настройки чатов" : section === "privacy" ? "Конфиденциальность" :
+             section === "notifications" ? "Уведомления" : section === "data" ? "Данные и память" :
+             section === "folders" ? "Папки с чатами" : section === "devices" ? "Устройства" :
+             section === "language" ? "Язык" : "Политика конфиденциальности"}
+          </h1>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-4 pb-6 space-y-4">
+
+          {section === "chats" && (
+            <>
+              <div className="glass rounded-3xl overflow-hidden">
+                <SettingsRow icon="CornerDownLeft" iconBg="bg-blue-500/20" label="Enter — отправить" desc="Отправка по Enter, перенос строки — Shift+Enter"
+                  right={<Toggle value={enterSend} onChange={v => { setEnterSend(v); save("s_enter_send", v); }} />} noBorder />
+              </div>
+
+              <div>
+                <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-2 px-1">Стиль пузырей</div>
+                <div className="glass rounded-3xl overflow-hidden">
+                  {[["modern", "Современный", "Скруглённые углы"], ["classic", "Классический", "Прямоугольные"], ["minimal", "Минимальный", "Без фона"]].map(([val, label, desc], i, arr) => (
+                    <button key={val} onClick={() => { setBubbleStyle(val); save("s_bubble", val); }}
+                      className={`flex items-center gap-3 px-4 py-3 w-full hover:bg-white/5 transition-all ${i < arr.length - 1 ? "border-b border-white/5" : ""}`}>
+                      <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 ${bubbleStyle === val ? "border-blue-500 bg-blue-500" : "border-muted-foreground"}`} />
+                      <div className="flex-1 text-left">
+                        <div className="text-sm font-medium text-foreground">{label}</div>
+                        <div className="text-xs text-muted-foreground">{desc}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-2 px-1">Размер шрифта</div>
+                <div className="glass rounded-3xl overflow-hidden">
+                  {[["small", "Маленький"], ["medium", "Средний"], ["large", "Крупный"]].map(([val, label], i, arr) => (
+                    <button key={val} onClick={() => { setFontSize(val); save("s_fontsize", val); }}
+                      className={`flex items-center gap-3 px-4 py-3 w-full hover:bg-white/5 transition-all ${i < arr.length - 1 ? "border-b border-white/5" : ""}`}>
+                      <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 ${fontSize === val ? "border-blue-500 bg-blue-500" : "border-muted-foreground"}`} />
+                      <span className="text-sm font-medium text-foreground">{label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-2 px-1">Оформление</div>
+                <div className="glass rounded-3xl overflow-hidden">
+                  <div className="flex items-center gap-3 px-4 py-3.5">
+                    <div className="w-9 h-9 rounded-xl bg-indigo-500/20 flex items-center justify-center flex-shrink-0">
+                      <Icon name={dark ? "Moon" : "Sun"} size={16} className="text-indigo-400" />
+                    </div>
+                    <span className="flex-1 text-sm font-medium text-foreground">{dark ? "Тёмная тема" : "Светлая тема"}</span>
+                    <Toggle value={dark} onChange={toggleDark} />
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+
+          {section === "privacy" && (
+            <>
+              <div>
+                <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-2 px-1">Кто видит мои данные</div>
+                <div className="glass rounded-3xl overflow-hidden">
+                  <div className="flex items-center gap-3 px-4 py-3.5 border-b border-white/5">
+                    <div className="w-9 h-9 rounded-xl bg-sky-500/20 flex items-center justify-center flex-shrink-0">
+                      <Icon name="Phone" size={16} className="text-sky-400" />
+                    </div>
+                    <div className="flex-1">
+                      <div className="text-sm font-medium text-foreground">Номер телефона</div>
+                      <div className="text-xs text-muted-foreground">Показывать контактам</div>
+                    </div>
+                    <Toggle value={showPhone} onChange={v => { setShowPhone(v); save("s_show_phone", v); }} />
+                  </div>
+                  <div className="flex items-center gap-3 px-4 py-3.5 border-b border-white/5">
+                    <div className="w-9 h-9 rounded-xl bg-green-500/20 flex items-center justify-center flex-shrink-0">
+                      <Icon name="Activity" size={16} className="text-green-400" />
+                    </div>
+                    <div className="flex-1">
+                      <div className="text-sm font-medium text-foreground">Статус «онлайн»</div>
+                      <div className="text-xs text-muted-foreground">Показывать, когда вы в сети</div>
+                    </div>
+                    <Toggle value={showOnline} onChange={v => { setShowOnline(v); save("s_show_online", v); }} />
+                  </div>
+                  <div className="flex items-center gap-3 px-4 py-3.5">
+                    <div className="w-9 h-9 rounded-xl bg-cyan-500/20 flex items-center justify-center flex-shrink-0">
+                      <Icon name="CheckCheck" size={16} className="text-cyan-400" />
+                    </div>
+                    <div className="flex-1">
+                      <div className="text-sm font-medium text-foreground">Уведомления о прочтении</div>
+                      <div className="text-xs text-muted-foreground">Двойная галочка при прочтении</div>
+                    </div>
+                    <Toggle value={readReceipts} onChange={v => { setReadReceipts(v); save("s_read_receipts", v); }} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="glass rounded-3xl p-4 border border-amber-500/10">
+                <div className="flex items-start gap-3">
+                  <Icon name="Info" size={16} className="text-amber-400 mt-0.5 flex-shrink-0" />
+                  <p className="text-xs text-muted-foreground leading-relaxed">Настройки конфиденциальности применяются к вашему аккаунту и влияют на то, что видят другие пользователи.</p>
+                </div>
+              </div>
+            </>
+          )}
+
+          {section === "notifications" && (
+            <>
+              <div className="glass rounded-3xl p-4 flex items-center gap-3 mb-2">
+                <div className={`w-9 h-9 rounded-xl border flex items-center justify-center flex-shrink-0 ${notifPerm === "granted" ? "bg-green-500/10 border-green-500/20" : "bg-amber-500/10 border-amber-500/20"}`}>
+                  <Icon name={notifPerm === "granted" ? "BellRing" : "Bell"} size={16} className={notifPerm === "granted" ? "text-green-400" : "text-amber-400"} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-foreground">{notifPerm === "granted" ? "Уведомления активны" : "Разрешить уведомления"}</div>
+                  <div className="text-xs text-muted-foreground">{notifPerm === "granted" ? "Браузерные push-уведомления включены" : "Нажмите, чтобы разрешить"}</div>
+                </div>
+                {notifPerm === "default" && (
+                  <button onClick={requestNotifPermission} className="flex-shrink-0 px-3 py-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 text-white text-xs font-semibold">Включить</button>
+                )}
+                {notifPerm === "granted" && (
+                  <button onClick={onTestSound} className="flex-shrink-0 px-3 py-1.5 rounded-xl bg-green-500/15 border border-green-500/20 text-green-400 text-xs font-semibold flex items-center gap-1">
+                    <Icon name="Volume2" size={12} />Тест
+                  </button>
+                )}
+              </div>
+
+              <div className="glass rounded-3xl overflow-hidden">
+                {[
+                  { icon: "MessageCircle", bg: "bg-blue-500/20", label: "Звук сообщений", val: msgSound, set: (v: boolean) => { setMsgSound(v); save("s_msg_sound", v); }, color: "text-blue-400" },
+                  { icon: "Users", bg: "bg-purple-500/20", label: "Уведомления групп", val: groupNotif, set: (v: boolean) => { setGroupNotif(v); save("s_group_notif", v); }, color: "text-purple-400" },
+                  { icon: "Phone", bg: "bg-green-500/20", label: "Уведомления о звонках", val: callNotif, set: (v: boolean) => { setCallNotif(v); save("s_call_notif", v); }, color: "text-green-400" },
+                  { icon: "Eye", bg: "bg-cyan-500/20", label: "Предпросмотр сообщений", val: preview, set: (v: boolean) => { setPreview(v); save("s_preview", v); }, color: "text-cyan-400" },
+                ].map(({ icon, bg, label, val, set, color }, i, arr) => (
+                  <div key={label} className={`flex items-center gap-3 px-4 py-3.5 ${i < arr.length - 1 ? "border-b border-white/5" : ""}`}>
+                    <div className={`w-9 h-9 rounded-xl ${bg} flex items-center justify-center flex-shrink-0`}>
+                      <Icon name={icon as Parameters<typeof Icon>[0]["name"]} size={16} className={color} />
+                    </div>
+                    <span className="flex-1 text-sm font-medium text-foreground">{label}</span>
+                    <Toggle value={val} onChange={set} />
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          {section === "data" && (
+            <>
+              <div className="glass rounded-3xl overflow-hidden">
+                <div className="flex items-center gap-3 px-4 py-3.5 border-b border-white/5">
+                  <div className="w-9 h-9 rounded-xl bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+                    <Icon name="Download" size={16} className="text-blue-400" />
+                  </div>
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-foreground">Авто-загрузка медиа</div>
+                    <div className="text-xs text-muted-foreground">Загружать фото и видео автоматически</div>
+                  </div>
+                  <Toggle value={autoDownload} onChange={v => { setAutoDownload(v); save("s_auto_download", v); }} />
+                </div>
+                <div className="flex items-center gap-3 px-4 py-3.5">
+                  <div className="w-9 h-9 rounded-xl bg-amber-500/20 flex items-center justify-center flex-shrink-0">
+                    <Icon name="Wifi" size={16} className="text-amber-400" />
+                  </div>
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-foreground">Экономия трафика</div>
+                    <div className="text-xs text-muted-foreground">Уменьшить качество медиа</div>
+                  </div>
+                  <Toggle value={dataSaver} onChange={v => { setDataSaver(v); save("s_data_saver", v); }} />
+                </div>
+              </div>
+
+              <div>
+                <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-2 px-1">Кэш и хранилище</div>
+                <div className="glass rounded-3xl p-4 space-y-3">
+                  {[["Кэш чатов", "~2.4 МБ"], ["Медиафайлы", "~18 МБ"], ["Голосовые", "~1.1 МБ"]].map(([label, size]) => (
+                    <div key={label} className="flex items-center justify-between">
+                      <span className="text-sm text-foreground">{label}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">{size}</span>
+                        <button className="text-xs text-sky-400 hover:text-sky-300 font-medium px-2 py-0.5 rounded-lg hover:bg-sky-500/10 transition-all">Очистить</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+
+          {section === "folders" && (
+            <>
+              <div className="glass rounded-3xl overflow-hidden">
+                {folders.map((f, i) => (
+                  <div key={f.id} className={`flex items-center gap-3 px-4 py-3.5 ${i < folders.length - 1 ? "border-b border-white/5" : ""}`}>
+                    <div className="w-9 h-9 rounded-xl bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+                      <Icon name={f.icon as Parameters<typeof Icon>[0]["name"]} size={16} className="text-blue-400" />
+                    </div>
+                    <div className="flex-1">
+                      <div className="text-sm font-medium text-foreground">{f.name}</div>
+                      <div className="text-xs text-muted-foreground">{f.count} чатов</div>
+                    </div>
+                    <Icon name="ChevronRight" size={15} className="text-muted-foreground" />
+                  </div>
+                ))}
+              </div>
+
+              <button className="w-full glass rounded-3xl p-4 flex items-center gap-3 hover:bg-white/5 transition-all border border-dashed border-white/10">
+                <div className="w-9 h-9 rounded-xl bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
+                  <Icon name="Plus" size={16} className="text-emerald-400" />
+                </div>
+                <span className="text-sm font-medium text-foreground">Создать папку</span>
+              </button>
+
+              <div className="glass rounded-3xl p-4 border border-blue-500/10">
+                <p className="text-xs text-muted-foreground leading-relaxed">Папки помогают организовать чаты по категориям. Перетащите чаты в папку в разделе «Чаты».</p>
+              </div>
+            </>
+          )}
+
+          {section === "devices" && (
+            <div className="space-y-3">
+              <div className="glass rounded-3xl overflow-hidden">
+                <div className="px-4 py-3.5 border-b border-white/5">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-green-500/20 flex items-center justify-center flex-shrink-0">
+                      <Icon name="Monitor" size={16} className="text-green-400" />
+                    </div>
+                    <div className="flex-1">
+                      <div className="text-sm font-medium text-foreground">Это устройство</div>
+                      <div className="text-xs text-muted-foreground">Активна сейчас · Веб-браузер</div>
+                    </div>
+                    <div className="w-2 h-2 rounded-full bg-green-400" />
+                  </div>
+                </div>
+                <div className="px-4 py-3.5">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+                      <Icon name="Smartphone" size={16} className="text-blue-400" />
+                    </div>
+                    <div className="flex-1">
+                      <div className="text-sm font-medium text-foreground">Мобильное устройство</div>
+                      <div className="text-xs text-muted-foreground">Последняя активность: сегодня</div>
+                    </div>
+                    <button className="text-xs text-red-400 hover:text-red-300 font-medium px-2 py-0.5 rounded-lg hover:bg-red-500/10 transition-all">Выйти</button>
+                  </div>
+                </div>
+              </div>
+              <button className="w-full glass rounded-3xl p-4 flex items-center gap-3 justify-center hover:bg-red-500/5 transition-all border border-red-500/10">
+                <Icon name="LogOut" size={16} className="text-red-400" />
+                <span className="text-sm font-medium text-red-400">Завершить все сеансы</span>
+              </button>
+            </div>
+          )}
+
+          {section === "language" && (
+            <div className="glass rounded-3xl overflow-hidden">
+              {[["ru", "Русский", "Текущий"], ["en", "English", ""], ["uk", "Українська", ""], ["kk", "Қазақша", ""]].map(([code, label, hint], i, arr) => (
+                <button key={code} className={`flex items-center gap-3 px-4 py-3.5 w-full hover:bg-white/5 transition-all ${i < arr.length - 1 ? "border-b border-white/5" : ""}`}>
+                  <div className="w-9 h-9 rounded-xl bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+                    <span className="text-xs font-bold text-blue-400">{code.toUpperCase()}</span>
+                  </div>
+                  <span className="flex-1 text-left text-sm font-medium text-foreground">{label}</span>
+                  {hint && <span className="text-xs text-sky-400">{hint}</span>}
+                  {code === "ru" && <Icon name="Check" size={15} className="text-sky-400" />}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {section === "policy" && (
+            <div className="space-y-3">
+              <div className="glass rounded-3xl p-5 space-y-3">
+                <h3 className="font-golos font-bold text-foreground">Политика конфиденциальности</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed">Мы уважаем вашу приватность. Приложение собирает только необходимые данные для работы: номер телефона, имя, сообщения и медиафайлы.</p>
+                <p className="text-sm text-muted-foreground leading-relaxed">Ваши сообщения передаются по защищённому протоколу HTTPS. Мы не передаём данные третьим лицам.</p>
+                <p className="text-sm text-muted-foreground leading-relaxed">Вы можете в любой момент удалить свой аккаунт и все связанные данные через раздел «Профиль».</p>
+              </div>
+              <div className="glass rounded-3xl p-5 space-y-2">
+                <h3 className="font-golos font-bold text-foreground">Использование данных</h3>
+                <ul className="space-y-2">
+                  {["Номер телефона используется для идентификации", "Сообщения хранятся на защищённых серверах", "Медиафайлы загружаются только по вашему запросу", "Аналитика не используется"].map(item => (
+                    <li key={item} className="flex items-start gap-2 text-sm text-muted-foreground">
+                      <Icon name="CheckCircle" size={14} className="text-green-400 mt-0.5 flex-shrink-0" />
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div className="text-center text-xs text-muted-foreground py-2">Версия 1.0.0 · Обновлено 2025</div>
+            </div>
+          )}
+
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full overflow-y-auto">
       <div className="px-4 pt-4 pb-3">
-        <h1 className="text-2xl font-golos font-black text-gradient mb-4">Настройки</h1>
+        <h1 className="text-2xl font-golos font-black text-gradient mb-1">Настройки</h1>
       </div>
-      <div className="px-4 space-y-4 pb-6">
-        {sections.map((s, si) => (
-          <div key={s.title} className="animate-fade-in" style={{ animationDelay: `${si * 0.08}s` }}>
-            <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-2 px-1">{s.title}</div>
-            <div className="glass rounded-3xl overflow-hidden">
-              {s.items.map((item, ii) => (
-                <div key={item.label}
-                  className={`flex items-center gap-3 px-4 py-3.5 ${ii < s.items.length - 1 ? "border-b border-white/5" : ""}`}>
-                  <div className="w-9 h-9 rounded-xl bg-blue-500/10 border border-white/5 flex items-center justify-center flex-shrink-0">
-                    <Icon name={item.icon} size={16} className="text-sky-400" />
-                  </div>
-                  <span className="flex-1 text-sm font-medium text-foreground">{item.label}</span>
-                  <button onClick={() => item.set(!item.v)}
-                    className={`w-11 h-6 rounded-full transition-all duration-300 relative flex-shrink-0 ${item.v ? "bg-gradient-to-r from-blue-600 to-blue-700" : "bg-secondary"}`}>
-                    <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all duration-300 ${item.v ? "left-5" : "left-0.5"}`} />
-                  </button>
-                </div>
-              ))}
+      <div className="px-4 pb-6 space-y-2">
+
+        {[
+          { id: "chats", icon: "MessageCircle", bg: "bg-blue-500/20", iconColor: "text-blue-400", label: "Настройки чатов", desc: "Стиль, шрифт, Enter" },
+          { id: "notifications", icon: "Bell", bg: "bg-purple-500/20", iconColor: "text-purple-400", label: "Уведомления", desc: "Звуки, предпросмотр" },
+          { id: "privacy", icon: "Lock", bg: "bg-emerald-500/20", iconColor: "text-emerald-400", label: "Конфиденциальность", desc: "Кто видит ваши данные" },
+          { id: "data", icon: "HardDrive", bg: "bg-orange-500/20", iconColor: "text-orange-400", label: "Данные и память", desc: "Кэш, авто-загрузка" },
+          { id: "folders", icon: "FolderOpen", bg: "bg-yellow-500/20", iconColor: "text-yellow-400", label: "Папки с чатами", desc: "Организация чатов" },
+          { id: "devices", icon: "Monitor", bg: "bg-cyan-500/20", iconColor: "text-cyan-400", label: "Устройства", desc: "Активные сеансы" },
+          { id: "language", icon: "Globe", bg: "bg-sky-500/20", iconColor: "text-sky-400", label: "Язык", desc: "Русский" },
+        ].map(({ id, icon, bg, iconColor, label, desc }, i, arr) => (
+          <button key={id} onClick={() => setSection(id as SettingsSection)}
+            className={`w-full glass rounded-2xl flex items-center gap-3 px-4 py-3.5 hover:bg-white/5 transition-all animate-fade-in`}
+            style={{ animationDelay: `${i * 0.04}s` }}>
+            <div className={`w-10 h-10 rounded-xl ${bg} flex items-center justify-center flex-shrink-0`}>
+              <Icon name={icon as Parameters<typeof Icon>[0]["name"]} size={18} className={iconColor} />
             </div>
-          </div>
+            <div className="flex-1 text-left">
+              <div className="text-sm font-semibold text-foreground">{label}</div>
+              <div className="text-xs text-muted-foreground">{desc}</div>
+            </div>
+            <Icon name="ChevronRight" size={16} className="text-muted-foreground" />
+          </button>
         ))}
-        {/* Notification permission block */}
-        <div className="animate-fade-in" style={{ animationDelay: "0.28s" }}>
-          <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-2 px-1">Браузерные уведомления</div>
-          <div className="glass rounded-3xl p-4 flex items-center gap-3">
-            <div className={`w-9 h-9 rounded-xl border flex items-center justify-center flex-shrink-0
-              ${notifPerm === "granted" ? "bg-green-500/10 border-green-500/20" : notifPerm === "denied" ? "bg-red-500/10 border-red-500/20" : "bg-amber-500/10 border-amber-500/20"}`}>
-              <Icon name={notifPerm === "granted" ? "BellRing" : notifPerm === "denied" ? "BellOff" : "Bell"}
-                size={16} className={notifPerm === "granted" ? "text-green-400" : notifPerm === "denied" ? "text-red-400" : "text-amber-400"} />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-foreground">
-                {notifPerm === "granted" ? "Уведомления включены" : notifPerm === "denied" ? "Уведомления заблокированы" : "Разрешить уведомления"}
+
+        <div className="pt-2">
+          <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-2 px-1">Оформление</div>
+          <div className="glass rounded-2xl overflow-hidden">
+            <div className="flex items-center gap-3 px-4 py-3.5">
+              <div className="w-10 h-10 rounded-xl bg-indigo-500/20 flex items-center justify-center flex-shrink-0">
+                <Icon name={dark ? "Moon" : "Sun"} size={18} className="text-indigo-400" />
               </div>
-              <div className="text-xs text-muted-foreground">
-                {notifPerm === "granted" ? "Вы получите уведомления о новых сообщениях" : notifPerm === "denied" ? "Разрешите доступ в настройках браузера" : "Нажмите, чтобы разрешить"}
+              <div className="flex-1 text-left">
+                <div className="text-sm font-semibold text-foreground">{dark ? "Тёмная тема" : "Светлая тема"}</div>
+                <div className="text-xs text-muted-foreground">Внешний вид приложения</div>
               </div>
+              <Toggle value={dark} onChange={toggleDark} />
             </div>
-            {notifPerm === "default" && (
-              <button onClick={requestNotifPermission}
-                className="flex-shrink-0 px-3 py-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 text-white text-xs font-semibold hover:opacity-90 transition-all">
-                Включить
-              </button>
-            )}
-            {notifPerm === "granted" && (
-              <button onClick={onTestSound}
-                className="flex-shrink-0 px-3 py-1.5 rounded-xl bg-green-500/15 border border-green-500/20 text-green-400 text-xs font-semibold hover:bg-green-500/25 transition-all flex items-center gap-1.5">
-                <Icon name="Volume2" size={12} />
-                Тест
-              </button>
-            )}
           </div>
         </div>
 
-        <button onClick={onLogout}
-          className="w-full glass rounded-3xl p-4 flex items-center gap-3 hover:bg-red-500/5 transition-all">
-          <div className="w-9 h-9 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center flex-shrink-0">
-            <Icon name="LogOut" size={16} className="text-red-400" />
-          </div>
-          <span className="text-sm font-medium text-red-400">Выйти из аккаунта</span>
-        </button>
+        <div className="pt-2">
+          <button onClick={() => setSection("policy")}
+            className="w-full glass rounded-2xl flex items-center gap-3 px-4 py-3.5 hover:bg-white/5 transition-all">
+            <div className="w-10 h-10 rounded-xl bg-slate-500/20 flex items-center justify-center flex-shrink-0">
+              <Icon name="FileText" size={18} className="text-slate-400" />
+            </div>
+            <div className="flex-1 text-left">
+              <div className="text-sm font-semibold text-foreground">Политика конфиденциальности</div>
+              <div className="text-xs text-muted-foreground">Версия 1.0.0</div>
+            </div>
+            <Icon name="ChevronRight" size={16} className="text-muted-foreground" />
+          </button>
+        </div>
+
+        <div className="pt-2">
+          <button onClick={onLogout}
+            className="w-full glass rounded-2xl p-4 flex items-center gap-3 hover:bg-red-500/5 transition-all border border-red-500/10">
+            <div className="w-10 h-10 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center flex-shrink-0">
+              <Icon name="LogOut" size={18} className="text-red-400" />
+            </div>
+            <span className="text-sm font-semibold text-red-400">Выйти из аккаунта</span>
+          </button>
+        </div>
       </div>
     </div>
   );

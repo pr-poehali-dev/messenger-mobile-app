@@ -1,7 +1,7 @@
 {
   "tests": [
     {
-      "name": "Health check - OPTIONS",
+      "name": "OPTIONS cors",
       "method": "OPTIONS",
       "path": "/",
       "expectedStatus": 200,
