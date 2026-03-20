@@ -2419,6 +2419,32 @@ function CallScreen({ session, token, onEnd }: { session: CallSession; token: st
 }
 
 function IncomingCallBanner({ session, onAccept, onDecline }: { session: CallSession; onAccept: () => void; onDecline: () => void }) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+    let stopped = false;
+
+    async function ring() {
+      while (!stopped) {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.setValueAtTime(1000, ctx.currentTime);
+        osc.frequency.setValueAtTime(800, ctx.currentTime + 0.15);
+        gain.gain.setValueAtTime(0.3, ctx.currentTime);
+        gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.4);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.4);
+        await new Promise(r => setTimeout(r, 1200));
+      }
+    }
+
+    ring();
+    return () => { stopped = true; ctx.close(); };
+  }, []);
+
   return (
     <div className="fixed top-4 left-0 right-0 z-50 flex justify-center px-4 animate-fade-in">
       <div className="w-full max-w-md glass border border-white/10 rounded-2xl px-4 py-3 shadow-2xl flex items-center gap-3">
