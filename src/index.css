@@ -172,7 +172,7 @@
     background-clip: text;
     filter: drop-shadow(0 0 18px rgba(56, 217, 245, 0.85))
       drop-shadow(0 0 40px rgba(0, 180, 230, 0.5));
-    letter-spacing: -0.02em;
+    letter-spacing: 0.15em;
   }
 
   .text-gradient-warm {
