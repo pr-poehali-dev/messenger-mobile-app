@@ -2286,21 +2286,27 @@ function ProfileTab({ user, token, onLogout, onUserUpdate, onDeleteAccount }: {
 function CallScreen({ session, token, onEnd }: { session: CallSession; token: string; onEnd: () => void }) {
   const [elapsed, setElapsed] = useState(0);
   const [muted, setMuted] = useState(false);
-  const [speakerOn, setSpeakerOn] = useState(true);
+  const [callStatus, setCallStatus] = useState<"ringing"|"active">(session.status === "active" ? "active" : "ringing");
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const lastSignalIdRef = useRef(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const endedRef = useRef(false);
+  const pendingCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
+  const remoteDescSetRef = useRef(false);
 
-  const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }];
+  const ICE_SERVERS = [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+    { urls: "stun:stun2.l.google.com:19302" },
+  ];
 
   async function sendSignal(type: string, payload: unknown) {
     await fetch(`${CALLS_URL}/signal`, {
       method: "POST", headers: apiHeaders(token),
       body: JSON.stringify({ call_id: session.callId, type, payload }),
-    });
+    }).catch(() => {});
   }
 
   async function endCall() {
@@ -2309,91 +2315,128 @@ function CallScreen({ session, token, onEnd }: { session: CallSession; token: st
     if (pollRef.current) clearInterval(pollRef.current);
     pcRef.current?.close();
     localStreamRef.current?.getTracks().forEach(t => t.stop());
-    await fetch(`${CALLS_URL}/end`, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ call_id: session.callId }) });
+    if (remoteAudioRef.current) { remoteAudioRef.current.srcObject = null; remoteAudioRef.current.remove(); remoteAudioRef.current = null; }
+    await fetch(`${CALLS_URL}/end`, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ call_id: session.callId }) }).catch(() => {});
     onEnd();
   }
 
   useEffect(() => {
-    let timer: ReturnType<typeof setInterval>;
-    if (session.status === "active") {
-      timer = setInterval(() => setElapsed(e => e + 1), 1000);
-    }
+    if (callStatus !== "active") return;
+    const timer = setInterval(() => setElapsed(e => e + 1), 1000);
     return () => clearInterval(timer);
-  }, [session.status]);
+  }, [callStatus]);
 
   useEffect(() => {
     async function init() {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false }).catch(() => null);
       if (!stream) { endCall(); return; }
       localStreamRef.current = stream;
 
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS, iceCandidatePoolSize: 10 });
       pcRef.current = pc;
       stream.getTracks().forEach(t => pc.addTrack(t, stream));
 
+      if (!remoteAudioRef.current) {
+        remoteAudioRef.current = document.createElement("audio");
+        remoteAudioRef.current.autoplay = true;
+        document.body.appendChild(remoteAudioRef.current);
+      }
+
       pc.ontrack = (e) => {
-        if (!remoteAudioRef.current) {
-          remoteAudioRef.current = new Audio();
-          remoteAudioRef.current.autoplay = true;
+        if (remoteAudioRef.current && e.streams[0]) {
+          remoteAudioRef.current.srcObject = e.streams[0];
+          remoteAudioRef.current.play().catch(() => {});
         }
-        remoteAudioRef.current.srcObject = e.streams[0];
+      };
+
+      pc.onconnectionstatechange = () => {
+        const state = pc.connectionState;
+        if (state === "connected") setCallStatus("active");
+        if (state === "disconnected" || state === "failed") endCall();
       };
 
       pc.onicecandidate = (e) => {
         if (e.candidate) sendSignal("ice-candidate", e.candidate.toJSON());
       };
 
+      async function flushPendingCandidates() {
+        for (const c of pendingCandidatesRef.current) {
+          await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {});
+        }
+        pendingCandidatesRef.current = [];
+      }
+
       if (session.direction === "outgoing") {
-        const offer = await pc.createOffer();
+        const offer = await pc.createOffer({ offerToReceiveAudio: true });
         await pc.setLocalDescription(offer);
         await sendSignal("offer", { sdp: offer.sdp, type: offer.type });
       }
 
       pollRef.current = setInterval(async () => {
         if (endedRef.current) return;
-        const res = await fetch(`${CALLS_URL}/poll?call_id=${session.callId}&last_signal_id=${lastSignalIdRef.current}`, { headers: apiHeaders(token) });
-        const data = await res.json();
+        const res = await fetch(`${CALLS_URL}/poll?call_id=${session.callId}&last_signal_id=${lastSignalIdRef.current}`, { headers: apiHeaders(token) }).catch(() => null);
+        if (!res) return;
+        const data = await res.json().catch(() => ({}));
+
         if (data.call?.status === "ended" || data.call?.status === "declined") { endCall(); return; }
-        for (const sig of data.signals ?? []) {
+        if (data.call?.status === "active" && callStatus !== "active") setCallStatus("active");
+
+        for (const sig of (data.signals ?? [])) {
           lastSignalIdRef.current = sig.id;
           const pl = typeof sig.payload === "string" ? JSON.parse(sig.payload) : sig.payload;
+
           if (sig.type === "offer" && session.direction === "incoming") {
+            if (pc.signalingState !== "stable") continue;
             await pc.setRemoteDescription(new RTCSessionDescription(pl));
+            remoteDescSetRef.current = true;
+            await flushPendingCandidates();
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
             await sendSignal("answer", { sdp: answer.sdp, type: answer.type });
-          } else if (sig.type === "answer") {
-            if (pc.signalingState === "have-local-offer") await pc.setRemoteDescription(new RTCSessionDescription(pl));
+
+          } else if (sig.type === "answer" && session.direction === "outgoing") {
+            if (pc.signalingState === "have-local-offer") {
+              await pc.setRemoteDescription(new RTCSessionDescription(pl));
+              remoteDescSetRef.current = true;
+              await flushPendingCandidates();
+            }
+
           } else if (sig.type === "ice-candidate") {
-            await pc.addIceCandidate(new RTCIceCandidate(pl)).catch(() => {});
+            if (remoteDescSetRef.current) {
+              await pc.addIceCandidate(new RTCIceCandidate(pl)).catch(() => {});
+            } else {
+              pendingCandidatesRef.current.push(pl);
+            }
           }
         }
-      }, 1500);
+      }, 1000);
     }
     init();
-    return () => { endedRef.current = true; if (pollRef.current) clearInterval(pollRef.current); };
+    return () => {
+      endedRef.current = true;
+      if (pollRef.current) clearInterval(pollRef.current);
+      if (remoteAudioRef.current) { remoteAudioRef.current.srcObject = null; remoteAudioRef.current.remove(); remoteAudioRef.current = null; }
+    };
   }, []);
 
   function toggleMute() {
-    localStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = muted; });
+    const tracks = localStreamRef.current?.getAudioTracks() ?? [];
+    tracks.forEach(t => { t.enabled = muted; });
     setMuted(m => !m);
   }
 
   const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  const statusLabel = callStatus === "active" ? fmt(elapsed) : (session.direction === "outgoing" ? "Вызов..." : "Соединение...");
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-between py-16 px-8 animate-fade-in"
       style={{ background: "linear-gradient(160deg, #0a1628 0%, #0d2040 50%, #071020 100%)" }}>
       <div className="flex flex-col items-center gap-4 mt-8">
-        <div className="w-28 h-28 rounded-full bg-gradient-to-br from-blue-600 to-cyan-500 flex items-center justify-center shadow-[0_0_60px_rgba(0,180,230,0.4)]">
+        <div className={`w-28 h-28 rounded-full bg-gradient-to-br from-blue-600 to-cyan-500 flex items-center justify-center shadow-[0_0_60px_rgba(0,180,230,0.4)] transition-all ${callStatus === "active" ? "scale-110" : "animate-pulse"}`}>
           <span className="text-4xl font-golos font-black text-white">{session.peerName[0]}</span>
         </div>
         <div className="text-xl font-golos font-bold text-white">{session.peerName}</div>
-        <div className="text-sm text-cyan-300">
-          {session.status === "ringing"
-            ? (session.direction === "outgoing" ? "Вызов..." : "Входящий звонок")
-            : fmt(elapsed)}
-        </div>
+        <div className={`text-sm font-medium ${callStatus === "active" ? "text-green-400" : "text-cyan-300"}`}>{statusLabel}</div>
       </div>
 
       <div className="flex flex-col items-center gap-8 w-full">
@@ -2402,11 +2445,6 @@ function CallScreen({ session, token, onEnd }: { session: CallSession; token: st
             className={`flex flex-col items-center gap-2 p-4 rounded-full transition-all ${muted ? "bg-red-500/30 text-red-300" : "bg-white/10 text-white"}`}>
             <Icon name={muted ? "MicOff" : "Mic"} size={24} />
             <span className="text-xs">{muted ? "Выкл" : "Микр"}</span>
-          </button>
-          <button onClick={() => setSpeakerOn(s => !s)}
-            className={`flex flex-col items-center gap-2 p-4 rounded-full transition-all ${speakerOn ? "bg-white/10 text-white" : "bg-white/5 text-muted-foreground"}`}>
-            <Icon name={speakerOn ? "Volume2" : "VolumeX"} size={24} />
-            <span className="text-xs">Динамик</span>
           </button>
         </div>
         <button onClick={endCall}
