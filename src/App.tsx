@@ -163,7 +163,7 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User, isNew?: bo
           <div className="w-20 h-20 mx-auto mb-4 rounded-3xl bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center shadow-[0_0_40px_rgba(0,119,182,0.5)]">
             <Icon name="House" size={36} className="text-white" />
           </div>
-          <h1 className="text-3xl font-golos font-black text-gradient mb-1">Наш Дом</h1>
+          <h1 className="text-3xl font-golos font-black text-gradient mb-1">Каспер</h1>
           <p className="text-muted-foreground text-sm">Мессенджер вашего сообщества</p>
         </div>
 
@@ -2466,7 +2466,7 @@ function SettingsTab({ onLogout, onTestSound }: { onLogout: () => void; onTestSo
     const perm = await Notification.requestPermission();
     setNotifPerm(perm);
     if (perm === "granted") {
-      new Notification("Наш Дом", { body: "Уведомления включены! 🏠", icon: "/favicon.svg" });
+      new Notification("Каспер", { body: "Уведомления включены! 🏠", icon: "/favicon.svg" });
     }
   }
 
@@ -2647,7 +2647,7 @@ function OnboardingScreen({ userName, onDone }: { userName: string; onDone: () =
         {isLast && (
           <div className="text-center animate-fade-in">
             <p className="text-lg font-golos font-bold text-foreground">Добро пожаловать, {userName}! 🏠</p>
-            <p className="text-sm text-muted-foreground mt-1">Рады видеть вас в «Наш Дом»</p>
+            <p className="text-sm text-muted-foreground mt-1">Рады видеть вас в «Каспер»</p>
           </div>
         )}
         <button onClick={next}
