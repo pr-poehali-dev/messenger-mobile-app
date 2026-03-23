@@ -838,6 +838,12 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
   const [blockedMe, setBlockedMe] = useState(false);
   const [blockLoading, setBlockLoading] = useState(false);
   const [showBlockMenu, setShowBlockMenu] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportReason, setReportReason] = useState("");
+  const [reportComment, setReportComment] = useState("");
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportDone, setReportDone] = useState(false);
+  const [reportMsgId, setReportMsgId] = useState<number | null>(null);
   const [forwardMsg, setForwardMsg] = useState<{ text: string; file_url?: string | null; file_name?: string | null; file_type?: string | null } | null>(null);
   const [forwardSearch, setForwardSearch] = useState("");
   const [forwarding, setForwarding] = useState<number | null>(null);
@@ -1313,6 +1319,23 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     finally { setBlockLoading(false); }
   }
 
+  async function sendReport() {
+    if (!reportReason) return;
+    setReportLoading(true);
+    try {
+      const body: Record<string, unknown> = { reason: reportReason, comment: reportComment };
+      if (reportMsgId) body.message_id = reportMsgId;
+      else if (chat.peer_id) body.user_id = chat.peer_id;
+      const res = await fetch(`${AUTH_URL}/report`, {
+        method: "POST", headers: apiHeaders(token),
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (data.ok) setReportDone(true);
+    } catch { /* ignore */ }
+    finally { setReportLoading(false); }
+  }
+
   async function loadStats() {
     if (stats || statsLoading) return;
     setStatsLoading(true);
@@ -1696,10 +1719,10 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
                   : <Icon name="MoreVertical" size={18} />}
               </button>
               {showBlockMenu && (
-                <div className="absolute right-0 top-10 z-30 w-52 glass border border-white/10 rounded-2xl shadow-2xl overflow-hidden animate-fade-in">
+                <div className="absolute right-0 top-10 z-30 w-56 glass border border-white/10 rounded-2xl shadow-2xl overflow-hidden animate-fade-in">
                   {isBlocked ? (
                     <button onClick={toggleBlock}
-                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-green-500/10 transition-colors text-left">
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-green-500/10 transition-colors text-left border-b border-white/5">
                       <Icon name="ShieldOff" size={15} className="text-green-400" />
                       <div>
                         <p className="text-sm text-green-300 font-medium">Разблокировать</p>
@@ -1708,7 +1731,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
                     </button>
                   ) : (
                     <button onClick={toggleBlock}
-                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-red-500/10 transition-colors text-left">
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-red-500/10 transition-colors text-left border-b border-white/5">
                       <Icon name="Shield" size={15} className="text-red-400" />
                       <div>
                         <p className="text-sm text-red-300 font-medium">Заблокировать</p>
@@ -1716,6 +1739,14 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
                       </div>
                     </button>
                   )}
+                  <button onClick={() => { setShowBlockMenu(false); setReportMsgId(null); setReportReason(""); setReportComment(""); setReportDone(false); setShowReportModal(true); }}
+                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-orange-500/10 transition-colors text-left">
+                    <Icon name="Flag" size={15} className="text-orange-400" />
+                    <div>
+                      <p className="text-sm text-orange-300 font-medium">Пожаловаться</p>
+                      <p className="text-[11px] text-muted-foreground">На пользователя</p>
+                    </div>
+                  </button>
                 </div>
               )}
             </div>
@@ -1734,6 +1765,102 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
                 Разблокировать
               </button>
             )}
+          </div>
+        )}
+
+        {/* Модалка жалобы */}
+        {showReportModal && (
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fade-in"
+            onClick={() => !reportLoading && setShowReportModal(false)}>
+            <div className="w-full max-w-md bg-[hsl(var(--background))] border border-white/10 rounded-t-3xl sm:rounded-3xl shadow-2xl"
+              onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-white/8">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-orange-500/15 flex items-center justify-center">
+                    <Icon name="Flag" size={16} className="text-orange-400" />
+                  </div>
+                  <h2 className="font-golos font-bold text-foreground">
+                    {reportMsgId ? "Жалоба на сообщение" : "Жалоба на пользователя"}
+                  </h2>
+                </div>
+                {!reportLoading && (
+                  <button onClick={() => setShowReportModal(false)}
+                    className="p-2 rounded-full hover:bg-white/10 transition-colors text-muted-foreground">
+                    <Icon name="X" size={18} />
+                  </button>
+                )}
+              </div>
+
+              <div className="px-5 py-4 space-y-4">
+                {reportDone ? (
+                  <div className="flex flex-col items-center gap-3 py-6 animate-fade-in">
+                    <div className="w-14 h-14 rounded-2xl bg-green-500/15 flex items-center justify-center">
+                      <Icon name="CheckCircle" size={28} className="text-green-400" />
+                    </div>
+                    <p className="font-golos font-bold text-foreground">Жалоба отправлена</p>
+                    <p className="text-sm text-muted-foreground text-center leading-relaxed">
+                      Мы рассмотрим её в течение 24 часов. Спасибо, что помогаете сделать сообщество безопаснее.
+                    </p>
+                    <button onClick={() => setShowReportModal(false)}
+                      className="w-full mt-2 py-3 rounded-2xl bg-gradient-to-r from-blue-600 to-blue-700 text-white font-golos font-semibold text-sm hover:opacity-90 transition-all">
+                      Закрыть
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-2 font-medium uppercase tracking-wide">Причина</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {[
+                          { id: "spam",          icon: "Megaphone",   label: "Спам" },
+                          { id: "abuse",         icon: "AlertOctagon", label: "Оскорбления" },
+                          { id: "fraud",         icon: "CreditCard",  label: "Мошенничество" },
+                          { id: "inappropriate", icon: "EyeOff",      label: "Неприемлемый контент" },
+                          { id: "threats",       icon: "Swords",      label: "Угрозы" },
+                          { id: "other",         icon: "MoreHorizontal", label: "Другое" },
+                        ].map(r => (
+                          <button key={r.id} onClick={() => setReportReason(r.id)}
+                            className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-left transition-all
+                              ${reportReason === r.id
+                                ? "bg-orange-500/15 border-orange-500/40 text-orange-300"
+                                : "bg-secondary/40 border-white/8 text-muted-foreground hover:border-white/20"}`}>
+                            <Icon name={r.icon} size={14} className="flex-shrink-0" />
+                            <span className="text-xs font-medium leading-tight">{r.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-2 font-medium uppercase tracking-wide">Комментарий <span className="normal-case">(необязательно)</span></p>
+                      <textarea
+                        value={reportComment}
+                        onChange={e => setReportComment(e.target.value)}
+                        placeholder="Опишите подробнее, что произошло..."
+                        rows={3}
+                        maxLength={500}
+                        className="w-full bg-secondary/60 border border-white/10 rounded-2xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:border-orange-500/40 transition-all"
+                      />
+                      <p className="text-[10px] text-muted-foreground mt-1 text-right">{reportComment.length}/500</p>
+                    </div>
+
+                    <div className="flex gap-3 pt-1">
+                      <button onClick={() => setShowReportModal(false)}
+                        className="flex-1 py-3 rounded-2xl bg-secondary/60 text-sm text-muted-foreground hover:bg-white/10 transition-colors">
+                        Отмена
+                      </button>
+                      <button onClick={sendReport}
+                        disabled={!reportReason || reportLoading}
+                        className="flex-1 py-3 rounded-2xl bg-gradient-to-r from-orange-500 to-red-500 text-white font-golos font-semibold text-sm hover:opacity-90 transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+                        {reportLoading
+                          ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />Отправляем...</>
+                          : <><Icon name="Flag" size={14} />Отправить</>}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
         )}
 
@@ -2267,6 +2394,20 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl glass border border-red-500/20 text-xs text-red-400 hover:bg-red-500/10 transition-all">
                     <Icon name="Trash2" size={12} />
                     Удалить
+                  </button>
+                )}
+                {!msg.out && !msg.is_deleted && (
+                  <button onClick={() => {
+                    setMenuMsgId(null);
+                    setReportMsgId(typeof msg.id === "number" ? msg.id : null);
+                    setReportReason("");
+                    setReportComment("");
+                    setReportDone(false);
+                    setShowReportModal(true);
+                  }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl glass border border-orange-500/20 text-xs text-orange-400 hover:bg-orange-500/10 transition-all">
+                    <Icon name="Flag" size={12} />
+                    Жалоба
                   </button>
                 )}
               </div>

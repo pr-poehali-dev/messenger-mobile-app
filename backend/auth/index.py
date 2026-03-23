@@ -625,6 +625,41 @@ def handler(event: dict, context) -> dict:
                 "blocked_me": blocked_me,
             })}
 
+        # POST /report — пожаловаться на пользователя или сообщение
+        if method == "POST" and path.endswith("/report"):
+            if not token:
+                return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
+            user = get_user_by_token(conn, token)
+            if not user:
+                return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Сессия истекла"})}
+            body = json.loads(event.get("body") or "{}")
+            reported_user_id = body.get("user_id")
+            reported_message_id = body.get("message_id")
+            reason = body.get("reason", "").strip()
+            comment = body.get("comment", "").strip()[:500]
+            valid_reasons = ["spam", "abuse", "fraud", "inappropriate", "threats", "other"]
+            if not reason or reason not in valid_reasons:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Укажите причину жалобы"})}
+            if not reported_user_id and not reported_message_id:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Укажите пользователя или сообщение"})}
+            if reported_user_id and reported_user_id == user["id"]:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Нельзя пожаловаться на себя"})}
+            # Не более 5 жалоб в день от одного пользователя
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT COUNT(*) FROM {SCHEMA}.reports
+                    WHERE reporter_id = %s AND created_at > NOW() - INTERVAL '24 hours'
+                """, (user["id"],))
+                if cur.fetchone()[0] >= 5:
+                    return {"statusCode": 429, "headers": cors, "body": json.dumps({"error": "Превышен лимит жалоб. Попробуйте завтра"})}
+                cur.execute(f"""
+                    INSERT INTO {SCHEMA}.reports (reporter_id, reported_user_id, reported_message_id, reason, comment)
+                    VALUES (%s, %s, %s, %s, %s) RETURNING id
+                """, (user["id"], reported_user_id, reported_message_id, reason, comment or None))
+                report_id = cur.fetchone()[0]
+            conn.commit()
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "report_id": report_id})}
+
         return {"statusCode": 404, "headers": cors, "body": json.dumps({"error": "Not found"})}
     finally:
         conn.close()
