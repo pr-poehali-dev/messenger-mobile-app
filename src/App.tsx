@@ -1288,22 +1288,69 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     } catch { /* keep optimistic */ }
   }
 
+  async function fileToBase64(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        resolve(result.includes(",") ? result.split(",")[1] : result);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function resizeImage(file: File, maxPx = 1920, quality = 0.85): Promise<{ blob: Blob; type: string }> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        let { width, height } = img;
+        if (width <= maxPx && height <= maxPx) {
+          // Не нужно сжимать, просто конвертируем в jpeg если нужно
+          const outType = file.type === "image/png" ? "image/png" : "image/jpeg";
+          const canvas = document.createElement("canvas");
+          canvas.width = width; canvas.height = height;
+          canvas.getContext("2d")!.drawImage(img, 0, 0);
+          canvas.toBlob(b => b ? resolve({ blob: b, type: outType }) : reject(new Error("canvas error")), outType, quality);
+          return;
+        }
+        if (width > height) { height = Math.round(height * maxPx / width); width = maxPx; }
+        else { width = Math.round(width * maxPx / height); height = maxPx; }
+        const canvas = document.createElement("canvas");
+        canvas.width = width; canvas.height = height;
+        canvas.getContext("2d")!.drawImage(img, 0, 0, width, height);
+        const outType = file.type === "image/png" ? "image/png" : "image/jpeg";
+        canvas.toBlob(b => b ? resolve({ blob: b, type: outType }) : reject(new Error("canvas error")), outType, quality);
+      };
+      img.onerror = reject;
+      img.src = url;
+    });
+  }
+
   async function uploadFileDirect(file: File): Promise<{ file_url: string; file_name: string; file_type: string; file_size: number }> {
-    const fileType = file.type || "application/octet-stream";
-    const form = new FormData();
-    form.append("file", file, file.name);
+    let b64: string;
+    let fileType = file.type || "application/octet-stream";
+    let fileSize = file.size;
 
-    const headers: Record<string, string> = {};
-    if (token) headers["X-Auth-Token"] = token;
+    if (file.type.startsWith("image/") && file.size > 200 * 1024) {
+      const { blob, type } = await resizeImage(file);
+      b64 = await fileToBase64(blob);
+      fileType = type;
+      fileSize = blob.size;
+    } else {
+      b64 = await fileToBase64(file);
+    }
 
-    const res = await fetch(`${CHATS_URL}?action=upload&token=${encodeURIComponent(token)}`, {
+    const res = await fetch(CHATS_URL, {
       method: "POST",
-      headers,
-      body: form,
+      headers: apiHeaders(token),
+      body: JSON.stringify({ action: "upload", file: b64, file_name: file.name, file_type: fileType }),
     });
     const data = await res.json();
     if (!data.file_url) throw new Error(data.error || "Не удалось загрузить файл");
-    return { file_url: data.file_url, file_name: data.file_name || file.name, file_type: data.file_type || fileType, file_size: file.size };
+    return { file_url: data.file_url, file_name: data.file_name || file.name, file_type: data.file_type || fileType, file_size: data.file_size || fileSize };
   }
 
   async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
@@ -1312,8 +1359,12 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     e.target.value = "";
     setUploadError(null);
 
-    if (file.size > 50 * 1024 * 1024) {
-      setUploadError("Файл слишком большой. Максимум 50 МБ");
+    if (file.size > 4 * 1024 * 1024 && !file.type.startsWith("image/")) {
+      setUploadError("Файл слишком большой. Для не-картинок максимум 4 МБ");
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      setUploadError("Файл слишком большой. Максимум 20 МБ");
       return;
     }
 

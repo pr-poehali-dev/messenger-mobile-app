@@ -48,25 +48,13 @@ def handler(event: dict, context) -> dict:
     token = (headers.get("X-Auth-Token") or headers.get("x-auth-token") or
              headers.get("X-authorization") or headers.get("x-authorization") or "")
 
-    content_type = headers.get("Content-Type") or headers.get("content-type") or ""
-    query_params = event.get("queryStringParameters") or {}
-
-    # Для multipart/form-data (загрузка файлов) — парсим вручную
-    is_multipart = "multipart/form-data" in content_type
-    if is_multipart:
+    body_raw = event.get("body") or "{}"
+    try:
+        body_pre = json.loads(body_raw)
+    except:
         body_pre = {}
-        body_raw = ""
-        # action и token берём из query string
-        action = query_params.get("action", "upload")
-        if query_params.get("token"):
-            token = query_params.get("token", token)
-    else:
-        body_raw = event.get("body") or "{}"
-        try:
-            body_pre = json.loads(body_raw)
-        except:
-            body_pre = {}
-        action = body_pre.get("action", "") or path.strip("/").split("/")[-1]
+    action = body_pre.get("action", "") or path.strip("/").split("/")[-1]
+    is_multipart = False
 
     conn = get_conn()
     try:
@@ -697,63 +685,22 @@ def handler(event: dict, context) -> dict:
                 if cur.fetchone()[0] >= 50:
                     return {"statusCode": 429, "headers": cors, "body": json.dumps({"error": "Слишком много загрузок. Попробуйте позже"})}
 
-            # Парсим multipart/form-data
-            if is_multipart:
-                import email
-                raw_body = event.get("body") or ""
-                is_b64_encoded = event.get("isBase64Encoded", False)
-                if is_b64_encoded:
-                    raw_bytes = base64.b64decode(raw_body)
-                else:
-                    raw_bytes = raw_body.encode("latin-1") if isinstance(raw_body, str) else raw_body
+            body = body_pre
+            file_b64 = body.get("file") or body.get("file_data")
+            file_name = (body.get("file_name") or "file").strip()[:255]
+            file_type = (body.get("file_type") or "application/octet-stream").strip()[:100]
 
-                boundary = ""
-                for part in content_type.split(";"):
-                    part = part.strip()
-                    if part.startswith("boundary="):
-                        boundary = part[9:].strip('"')
-                        break
+            if not file_b64:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "file required"})}
 
-                file_data = None
-                file_name = "file"
-                file_type = "application/octet-stream"
+            # base64 может содержать data URL prefix — убираем
+            if "," in file_b64:
+                file_b64 = file_b64.split(",", 1)[1]
 
-                if boundary:
-                    delimiter = f"--{boundary}".encode()
-                    parts = raw_bytes.split(delimiter)
-                    for p in parts:
-                        if b"Content-Disposition" not in p:
-                            continue
-                        header_end = p.find(b"\r\n\r\n")
-                        if header_end == -1:
-                            continue
-                        headers_raw = p[:header_end].decode("utf-8", errors="replace")
-                        body_part = p[header_end+4:]
-                        if body_part.endswith(b"\r\n"):
-                            body_part = body_part[:-2]
-                        if 'name="file"' in headers_raw:
-                            file_data = body_part
-                            for h_line in headers_raw.splitlines():
-                                if "Content-Type:" in h_line:
-                                    file_type = h_line.split("Content-Type:")[-1].strip()
-                                if "filename=" in h_line:
-                                    fn = h_line.split("filename=")[-1].strip().strip('"')
-                                    if fn:
-                                        file_name = fn
-                if file_data is None:
-                    return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Файл не найден в запросе"})}
-            else:
-                body = body_pre
-                file_b64 = body.get("file") or body.get("file_data")
-                file_name = (body.get("file_name") or "file").strip()[:255]
-                file_type = (body.get("file_type") or "application/octet-stream").strip()[:100]
-
-                if not file_b64:
-                    return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "file required"})}
-                try:
-                    file_data = base64.b64decode(file_b64, validate=True)
-                except Exception:
-                    return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Некорректный файл"})}
+            try:
+                file_data = base64.b64decode(file_b64)
+            except Exception as e:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": f"Некорректный файл: {e}"})}
 
             if not file_data:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Файл пуст"})}
