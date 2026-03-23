@@ -5573,9 +5573,9 @@ function PinScreen({ mode, onSuccess, onCancel }: {
   );
 }
 
-// ─── Bottom Navigation ────────────────────────────────────────────────────────
+// ─── Bottom Nav Bar ───────────────────────────────────────────────────────────
 
-function BottomNav({ active, onChange, unreadCount }: { active: Tab; onChange: (t: Tab) => void; unreadCount: number }) {
+function AppBottomNav({ active, onChange, unreadCount }: { active: Tab; onChange: (t: Tab) => void; unreadCount: number }) {
   const items: { tab: Tab; icon: string; label: string }[] = [
     { tab: "chats", icon: "MessageCircle", label: "Чаты" },
     { tab: "contacts", icon: "Users", label: "Контакты" },
@@ -5935,7 +5935,7 @@ export default function App() {
       {/* ── МОБИЛЬНЫЙ режим (< md) ── */}
       <div className="flex flex-col flex-1 overflow-hidden md:hidden">
         <div className="flex-1 overflow-hidden relative z-10">{tabs[tab]}</div>
-        <BottomNav active={tab} onChange={setTab} unreadCount={unreadCount} />
+        <AppBottomNav active={tab} onChange={setTab} unreadCount={unreadCount} />
       </div>
 
       {/* ── ДЕСКТОПНЫЙ режим (≥ md) ── */}

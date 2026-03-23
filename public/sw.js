@@ -1,6 +1,6 @@
 // ─── Каспер Service Worker ────────────────────────────────────────────────────
 // Обновляй BUILD_TIME при каждом деплое чтобы инвалидировать кэш у всех
-const BUILD_TIME = "20260323-v3";
+const BUILD_TIME = "20260323-v4";
 const CACHE_APP = `kasper-app-${BUILD_TIME}`;
 const CACHE_ASSETS = `kasper-assets-${BUILD_TIME}`;
 const APP_ICON = "https://cdn.poehali.dev/projects/84792fb2-1985-42c4-8056-a4e27799a11a/bucket/2069fcb7-f721-4674-b0d8-51603e738767.png";
