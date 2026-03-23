@@ -4710,6 +4710,114 @@ function SettingsRow({ icon, iconBg, label, value, desc, onClick, right, noBorde
   );
 }
 
+// ─── Install App Button (PWA) ─────────────────────────────────────────────────
+
+function InstallAppButton() {
+  const [prompt, setPrompt] = useState<{ prompt: () => void } | null>(null);
+  const [installed, setInstalled] = useState(false);
+  const [showIOSGuide, setShowIOSGuide] = useState(false);
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const isInStandalone = ("standalone" in navigator) && (navigator as { standalone?: boolean }).standalone;
+
+  useEffect(() => {
+    if (isInStandalone) { setInstalled(true); return; }
+    const handler = (e: Event) => { e.preventDefault(); setPrompt(e as { prompt: () => void }); };
+    window.addEventListener("beforeinstallprompt", handler);
+    window.addEventListener("appinstalled", () => setInstalled(true));
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handler);
+      window.removeEventListener("appinstalled", () => setInstalled(true));
+    };
+  }, [isInStandalone]);
+
+  if (installed) {
+    return (
+      <div className="w-full glass rounded-2xl flex items-center gap-3 px-4 py-3.5">
+        <div className="w-10 h-10 rounded-xl bg-green-500/15 border border-green-500/20 flex items-center justify-center flex-shrink-0">
+          <Icon name="CheckCircle" size={18} className="text-green-400" />
+        </div>
+        <div className="flex-1 text-left">
+          <div className="text-sm font-semibold text-foreground">Приложение установлено</div>
+          <div className="text-xs text-green-400">Открывайте с экрана «Домой»</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!prompt && !isIOS) return null;
+
+  return (
+    <>
+      <button
+        onClick={() => {
+          if (prompt) {
+            prompt.prompt();
+            setInstalled(true);
+          } else if (isIOS) {
+            setShowIOSGuide(true);
+          }
+        }}
+        className="w-full glass rounded-2xl flex items-center gap-3 px-4 py-3.5 hover:bg-blue-500/5 transition-all border border-blue-500/15">
+        <div className="w-10 h-10 rounded-xl bg-blue-500/15 border border-blue-500/20 flex items-center justify-center flex-shrink-0">
+          <Icon name="Download" size={18} className="text-blue-400" />
+        </div>
+        <div className="flex-1 text-left">
+          <div className="text-sm font-semibold text-foreground">Установить приложение</div>
+          <div className="text-xs text-muted-foreground">
+            {isIOS ? "Добавить на экран «Домой»" : "Работает без браузера"}
+          </div>
+        </div>
+        <Icon name="ChevronRight" size={16} className="text-muted-foreground" />
+      </button>
+
+      {/* iOS guide modal */}
+      {showIOSGuide && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center p-4 animate-fade-in"
+          onClick={() => setShowIOSGuide(false)}>
+          <div className="w-full max-w-md glass border border-white/10 rounded-3xl p-5 shadow-2xl"
+            onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <img src="https://cdn.poehali.dev/projects/84792fb2-1985-42c4-8056-a4e27799a11a/files/8f6169f2-71c4-4f34-8ad2-ca3c377792eb.jpg"
+                  className="w-10 h-10 rounded-2xl" alt="Каспер" />
+                <div>
+                  <p className="font-golos font-bold text-foreground">Установка на iPhone</p>
+                  <p className="text-xs text-muted-foreground">Safari · iOS</p>
+                </div>
+              </div>
+              <button onClick={() => setShowIOSGuide(false)} className="p-2 hover:bg-white/10 rounded-full">
+                <Icon name="X" size={16} className="text-muted-foreground" />
+              </button>
+            </div>
+            <div className="space-y-3">
+              {[
+                { n: "1", icon: "Share2", title: "Нажмите кнопку «Поделиться»", desc: "Кнопка в нижней панели Safari" },
+                { n: "2", icon: "PlusSquare", title: "«На экран «Домой»»", desc: "Прокрутите список действий вниз" },
+                { n: "3", icon: "Check", title: "Нажмите «Добавить»", desc: "Иконка появится на рабочем столе" },
+              ].map(s => (
+                <div key={s.n} className="flex items-center gap-3 p-3 rounded-2xl bg-white/4">
+                  <div className="w-8 h-8 rounded-full bg-blue-500/20 text-blue-400 font-bold text-sm flex items-center justify-center flex-shrink-0">
+                    {s.n}
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-foreground">{s.title}</p>
+                    <p className="text-xs text-muted-foreground">{s.desc}</p>
+                  </div>
+                  <Icon name={s.icon} size={18} className="text-sky-400 flex-shrink-0" />
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-center mt-4">
+              <Icon name="ArrowDown" size={16} className="text-muted-foreground animate-bounce" />
+              <span className="text-xs text-muted-foreground ml-1">Кнопка Share внизу экрана</span>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function SettingsTab({ onLogout, onTestSound }: { onLogout: () => void; onTestSound: () => void }) {
   const [section, setSection] = useState<SettingsSection>("main");
   const [dark, setDark] = useState(() => localStorage.getItem("pulse_theme") !== "light");
@@ -5224,7 +5332,10 @@ function SettingsTab({ onLogout, onTestSound }: { onLogout: () => void; onTestSo
           </div>
         </div>
 
-        <div className="pt-2">
+        <div className="pt-2 space-y-2">
+          {/* Установить приложение */}
+          <InstallAppButton />
+
           <button onClick={() => setSection("policy")}
             className="w-full glass rounded-2xl flex items-center gap-3 px-4 py-3.5 hover:bg-white/5 transition-all">
             <div className="w-10 h-10 rounded-xl bg-slate-500/20 flex items-center justify-center flex-shrink-0">
@@ -5508,9 +5619,36 @@ export default function App() {
   // PWA install prompt (Android Chrome)
   const [installPrompt, setInstallPrompt] = useState<Event | null>(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
+  const [swReady, setSwReady] = useState(false);
+
+  // ── Регистрируем SW сразу при загрузке (до авторизации) ──
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.register("/sw.js")
+      .then(reg => {
+        setSwReady(true);
+        // Слушаем сообщение SYNC_REQUIRED от SW
+        navigator.serviceWorker.addEventListener("message", (e) => {
+          if (e.data?.type === "SYNC_REQUIRED") {
+            window.dispatchEvent(new CustomEvent("kasper:sync"));
+          }
+        });
+        // Проверяем обновление каждые 60 сек
+        setInterval(() => reg.update().catch(() => {}), 60_000);
+      })
+      .catch(() => {}); // Ошибка регистрации SW — не критично
+  }, []);
+
   useEffect(() => {
     const handler = (e: Event) => { e.preventDefault(); setInstallPrompt(e); setShowInstallBanner(true); };
     window.addEventListener("beforeinstallprompt", handler);
+    // На iOS нет beforeinstallprompt — показываем баннер через 3 сек если iOS Safari
+    const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    const isInStandalone = ("standalone" in navigator) && (navigator as { standalone?: boolean }).standalone;
+    const shownBefore = localStorage.getItem("kasper_install_shown");
+    if (isIOS && !isInStandalone && !shownBefore) {
+      setTimeout(() => setShowInstallBanner(true), 3000);
+    }
     return () => window.removeEventListener("beforeinstallprompt", handler);
   }, []);
 
@@ -5547,9 +5685,9 @@ export default function App() {
       .finally(() => setAuthChecked(true));
   }, []);
 
-  // Register Service Worker and subscribe to push notifications
+  // Подписка на Push-уведомления (после логина + после регистрации SW)
   useEffect(() => {
-    if (!token || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    if (!token || !swReady || !("PushManager" in window)) return;
 
     async function setupPush() {
       try {
@@ -5558,10 +5696,7 @@ export default function App() {
           : Notification.permission;
         if (perm !== "granted") return;
 
-        const reg = await navigator.serviceWorker.register("/sw.js");
-        await navigator.serviceWorker.ready;
-
-        // Get VAPID public key from backend
+        const reg = await navigator.serviceWorker.ready;
         const keyRes = await fetch(`${CHATS_URL}/vapid-public-key`, { headers: apiHeaders(token) });
         const keyData = await keyRes.json();
         if (!keyData.public_key) return;
@@ -5581,7 +5716,7 @@ export default function App() {
     }
 
     setupPush();
-  }, [token]);
+  }, [token, swReady]);
 
   const playSound = useCallback(() => {
     try {
@@ -5878,19 +6013,74 @@ export default function App() {
       {activeCall && (
         <CallScreen session={activeCall} token={token} onEnd={() => setActiveCall(null)} />
       )}
+      {/* ── Install banner (Android/Chrome) ── */}
       {showInstallBanner && installPrompt && (
-        <div className="fixed top-0 left-0 right-0 z-50 flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-blue-700 to-blue-600 text-white text-sm shadow-lg animate-fade-in">
-          <Icon name="Download" size={18} className="flex-shrink-0" />
-          <span className="flex-1 font-medium">Установить приложение</span>
-          <button onClick={() => {
-            (installPrompt as { prompt: () => void }).prompt();
-            setShowInstallBanner(false);
-          }} className="px-3 py-1 bg-white/20 rounded-lg font-semibold hover:bg-white/30 transition-all">
-            Установить
-          </button>
-          <button onClick={() => setShowInstallBanner(false)} className="p-1 hover:bg-white/20 rounded-lg transition-all">
-            <Icon name="X" size={14} />
-          </button>
+        <div className="fixed bottom-20 md:bottom-4 left-4 right-4 z-50 animate-fade-in" style={{ maxWidth: 480, margin: "0 auto" }}>
+          <div className="glass border border-white/15 rounded-3xl p-4 shadow-2xl flex items-center gap-3"
+            style={{ boxShadow: "0 8px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.08)" }}>
+            <div className="w-12 h-12 rounded-2xl overflow-hidden flex-shrink-0 ring-2 ring-white/10">
+              <img src="https://cdn.poehali.dev/projects/84792fb2-1985-42c4-8056-a4e27799a11a/files/8f6169f2-71c4-4f34-8ad2-ca3c377792eb.jpg"
+                className="w-full h-full object-cover" alt="Каспер" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="font-golos font-bold text-foreground text-sm">Установить Каспер</p>
+              <p className="text-xs text-muted-foreground">Работает как приложение, без браузера</p>
+            </div>
+            <button onClick={() => {
+              localStorage.setItem("kasper_install_shown", "1");
+              (installPrompt as { prompt: () => void }).prompt();
+              setShowInstallBanner(false);
+            }} className="px-4 py-2 rounded-2xl bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm font-semibold hover:opacity-90 transition-all shadow-[0_0_20px_rgba(0,119,182,0.4)] flex-shrink-0">
+              Установить
+            </button>
+            <button onClick={() => { localStorage.setItem("kasper_install_shown", "1"); setShowInstallBanner(false); }}
+              className="p-1.5 hover:bg-white/10 rounded-full transition-colors flex-shrink-0">
+              <Icon name="X" size={16} className="text-muted-foreground" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Install banner iOS (Safari) ── */}
+      {showInstallBanner && !installPrompt && (
+        <div className="fixed bottom-20 left-4 right-4 z-50 animate-fade-in" style={{ maxWidth: 480, margin: "0 auto" }}>
+          <div className="glass border border-white/15 rounded-3xl p-4 shadow-2xl"
+            style={{ boxShadow: "0 8px 40px rgba(0,0,0,0.6)" }}>
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-12 h-12 rounded-2xl overflow-hidden flex-shrink-0 ring-2 ring-white/10">
+                <img src="https://cdn.poehali.dev/projects/84792fb2-1985-42c4-8056-a4e27799a11a/files/8f6169f2-71c4-4f34-8ad2-ca3c377792eb.jpg"
+                  className="w-full h-full object-cover" alt="Каспер" />
+              </div>
+              <div className="flex-1">
+                <p className="font-golos font-bold text-foreground text-sm">Добавить на экран «Домой»</p>
+                <p className="text-xs text-muted-foreground">Установить как приложение на iPhone/iPad</p>
+              </div>
+              <button onClick={() => { localStorage.setItem("kasper_install_shown", "1"); setShowInstallBanner(false); }}
+                className="p-1.5 hover:bg-white/10 rounded-full transition-colors flex-shrink-0">
+                <Icon name="X" size={16} className="text-muted-foreground" />
+              </button>
+            </div>
+            <div className="space-y-2 pl-1">
+              {[
+                { n: "1", text: "Нажмите кнопку", icon: "Share" },
+                { n: "2", text: "Выберите «На экран Домой»", icon: "Plus" },
+                { n: "3", text: "Нажмите «Добавить»", icon: "Check" },
+              ].map(s => (
+                <div key={s.n} className="flex items-center gap-2.5">
+                  <span className="w-5 h-5 rounded-full bg-blue-500/20 text-blue-400 text-[11px] font-bold flex items-center justify-center flex-shrink-0">{s.n}</span>
+                  <span className="text-xs text-muted-foreground flex-1">{s.text}</span>
+                  <div className="w-6 h-6 rounded-lg bg-white/8 flex items-center justify-center flex-shrink-0">
+                    <Icon name={s.icon} size={12} className="text-sky-400" />
+                  </div>
+                </div>
+              ))}
+            </div>
+            {/* Стрелка вниз указывающая на кнопку поделиться Safari */}
+            <div className="flex items-center justify-center mt-3 gap-1 text-xs text-muted-foreground/60">
+              <Icon name="ArrowDown" size={12} />
+              <span>Кнопка Share внизу браузера</span>
+            </div>
+          </div>
         </div>
       )}
     </div>

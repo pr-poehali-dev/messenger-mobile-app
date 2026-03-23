@@ -13,6 +13,14 @@
     <!-- PWA Manifest -->
     <link rel="manifest" href="/manifest.json"/>
 
+    <!-- SW версия — инвалидирует кэш при каждом деплое -->
+    <script>
+      // Патчим SW с текущим BUILD_TIME чтобы старый кэш очищался
+      if ('serviceWorker' in navigator) {
+        window.__SW_BUILD_TIME__ = '20260323';
+      }
+    </script>
+
     <!-- Иконки -->
     <link rel="icon" type="image/jpeg" href="https://cdn.poehali.dev/projects/84792fb2-1985-42c4-8056-a4e27799a11a/files/8f6169f2-71c4-4f34-8ad2-ca3c377792eb.jpg">
     <link rel="apple-touch-icon" sizes="180x180" href="https://cdn.poehali.dev/projects/84792fb2-1985-42c4-8056-a4e27799a11a/files/8f6169f2-71c4-4f34-8ad2-ca3c377792eb.jpg">
