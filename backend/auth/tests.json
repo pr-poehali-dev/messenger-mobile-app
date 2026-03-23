@@ -11,9 +11,9 @@
       "name": "POST send-code missing contact",
       "method": "POST",
       "path": "/",
-      "body": {"action": "send-code", "purpose": "register"},
+      "body": {"action": "register"},
       "expectedStatus": 400,
-      "expectedBody": {"error": "Укажите email или телефон"},
+      "expectedBody": {"error": "Заполните все поля"},
       "bodyMatcher": "partial"
     }
   ]
