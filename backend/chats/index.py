@@ -44,7 +44,9 @@ def handler(event: dict, context) -> dict:
 
     method = event.get("httpMethod", "GET")
     path = event.get("path", "/")
-    token = event.get("headers", {}).get("X-Auth-Token") or event.get("headers", {}).get("x-auth-token")
+    headers = event.get("headers") or {}
+    token = (headers.get("X-Auth-Token") or headers.get("x-auth-token") or
+             headers.get("X-authorization") or headers.get("x-authorization") or "")
 
     body_raw = event.get("body") or "{}"
     try:
@@ -52,6 +54,7 @@ def handler(event: dict, context) -> dict:
     except:
         body_pre = {}
     action = body_pre.get("action", "") or path.strip("/").split("/")[-1]
+    print(f"[DEBUG] action={action} token_present={bool(token)} headers_keys={list(headers.keys())[:8]}")
 
     conn = get_conn()
     try:
@@ -387,9 +390,10 @@ def handler(event: dict, context) -> dict:
                     if peer_row:
                         peer_id = peer_row[0]
                         cur.execute(f"""
-                            SELECT 1 FROM {SCHEMA}.blocks
-                            WHERE (blocker_id = %s AND blocked_id = %s)
-                               OR (blocker_id = %s AND blocked_id = %s)
+                            SELECT 1 FROM {SCHEMA}.blocked_users
+                            WHERE ((blocker_id = %s AND blocked_id = %s)
+                               OR (blocker_id = %s AND blocked_id = %s))
+                               AND is_active = TRUE
                         """, (user_id, peer_id, peer_id, user_id))
                         if cur.fetchone():
                             return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Переписка заблокирована"})}
