@@ -140,6 +140,8 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User, isNew?: bo
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [showPolicy, setShowPolicy] = useState(false);
+  const [showTerms, setShowTerms] = useState(false);
 
   async function handleSubmit() {
     setError("");
