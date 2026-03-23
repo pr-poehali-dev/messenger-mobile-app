@@ -295,7 +295,7 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 user = {"id": user_id, "name": uname, "phone": uphone, "email": uemail,
                         "bio": ubio or "", "status": "online", "avatar_url": uavatar}
-                return {"statusCode": 200, "headers": cors, "body": json.dumps({"token": token_val, "user": user})}
+                return {"statusCode": 200, "headers": cors, "body": json.dumps({"token": token_val, "user": user, "is_new": False})}
 
         # POST /register (оставляем для обратной совместимости)
         if method == "POST" and path.endswith("/register"):

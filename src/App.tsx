@@ -21,7 +21,8 @@ type UserRole = "admin" | "member" | "moderator";
 interface User {
   id: number;
   name: string;
-  phone: string;
+  phone?: string | null;
+  email?: string | null;
   bio?: string;
   status?: string;
   avatar_url?: string | null;
@@ -1280,37 +1281,47 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
 
   async function sendVoiceBlob(blob: Blob, duration: number) {
     if (voicePreview) { URL.revokeObjectURL(voicePreview.url); setVoicePreview(null); }
+    if (blob.size < 500) return;
     setUploading(true);
+    const optId = `opt-${Date.now()}-${Math.random()}`;
+    const fmtDur = `${Math.floor(duration / 60)}:${String(duration % 60).padStart(2, "0")}`;
+    const mimeType = blob.type || "audio/webm";
+    const ext = mimeType.includes("ogg") ? "ogg" : mimeType.includes("mp4") ? "mp4" : "webm";
+    // Добавляем optimistic сразу
+    const optimistic: Message = {
+      id: optId, text: "",
+      time: new Date().toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" }),
+      out: true, is_read: false,
+      file_url: null, file_name: `Голосовое · ${fmtDur}`, file_size: blob.size, file_type: mimeType,
+    };
+    setMessages(prev => [...prev, optimistic]);
     try {
       const reader = new FileReader();
       reader.readAsDataURL(blob);
-      const dataUrl = await new Promise<string>(res => { reader.onload = () => res(reader.result as string); });
+      const dataUrl = await new Promise<string>((res, rej) => {
+        reader.onload = () => res(reader.result as string);
+        reader.onerror = rej;
+      });
       const base64 = dataUrl.split(",")[1];
-      const mimeType = blob.type || "audio/webm";
-      const ext = mimeType.includes("ogg") ? "ogg" : mimeType.includes("mp4") ? "mp4" : "webm";
-      const res = await fetch(`${CHATS_URL}/upload`, {
+      const upRes = await fetch(`${CHATS_URL}/upload`, {
         method: "POST", headers: apiHeaders(token),
         body: JSON.stringify({ file_data: base64, file_name: `voice_${Date.now()}.${ext}`, file_type: mimeType }),
       });
-      const data = await res.json();
-      if (data.url) {
-        const fmtDur = `${Math.floor(duration / 60)}:${String(duration % 60).padStart(2, "0")}`;
-        const optimistic: Message = {
-          id: `opt-${Date.now()}`, text: "",
-          time: new Date().toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" }),
-          out: true, is_read: false,
-          file_url: data.url, file_name: `Голосовое · ${fmtDur}`, file_size: blob.size, file_type: mimeType,
-        };
-        setMessages(prev => [...prev, optimistic]);
-        const sendRes = await fetch(`${CHATS_URL}/send`, {
-          method: "POST", headers: apiHeaders(token),
-          body: JSON.stringify({ chat_id: chat.id, text: "", file_url: data.url, file_name: optimistic.file_name, file_size: blob.size, file_type: mimeType }),
-        });
-        const sendData = await sendRes.json();
-        if (sendData.message) {
-          setMessages(prev => prev.map(m => m.id === optimistic.id ? { ...sendData.message, out: true } : m));
-        }
+      const upData = await upRes.json();
+      if (!upData.url) throw new Error("Upload failed");
+
+      const sendRes = await fetch(`${CHATS_URL}/send`, {
+        method: "POST", headers: apiHeaders(token),
+        body: JSON.stringify({ chat_id: chat.id, text: "", file_url: upData.url, file_name: optimistic.file_name, file_size: blob.size, file_type: mimeType }),
+      });
+      const sendData = await sendRes.json();
+      if (sendData.message) {
+        setMessages(prev => prev.map(m => m.id === optId ? { ...sendData.message, out: true } : m));
+      } else {
+        setMessages(prev => prev.map(m => m.id === optId ? { ...m, _failed: true } : m));
       }
+    } catch {
+      setMessages(prev => prev.map(m => m.id === optId ? { ...m, _failed: true } : m));
     } finally { setUploading(false); }
   }
 
@@ -4457,25 +4468,144 @@ function SettingsTab({ onLogout, onTestSound }: { onLogout: () => void; onTestSo
           )}
 
           {section === "policy" && (
-            <div className="space-y-3">
+            <div className="space-y-4 pb-4">
+
+              {/* Вводный блок */}
               <div className="glass rounded-3xl p-5 space-y-3">
-                <h3 className="font-golos font-bold text-foreground">Политика конфиденциальности</h3>
-                <p className="text-sm text-muted-foreground leading-relaxed">Мы уважаем вашу приватность. Приложение собирает только необходимые данные для работы: номер телефона, имя, сообщения и медиафайлы.</p>
-                <p className="text-sm text-muted-foreground leading-relaxed">Ваши сообщения передаются по защищённому протоколу HTTPS. Мы не передаём данные третьим лицам.</p>
-                <p className="text-sm text-muted-foreground leading-relaxed">Вы можете в любой момент удалить свой аккаунт и все связанные данные через раздел «Профиль».</p>
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-blue-500/15 border border-blue-500/20 flex items-center justify-center flex-shrink-0">
+                    <Icon name="Shield" size={18} className="text-blue-400" />
+                  </div>
+                  <div>
+                    <h3 className="font-golos font-bold text-foreground text-base">Политика конфиденциальности</h3>
+                    <p className="text-xs text-muted-foreground">Версия 1.0 · Дата вступления в силу: 23 марта 2026 г.</p>
+                  </div>
+                </div>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  Настоящая Политика конфиденциальности описывает, какие данные собирает мессенджер <strong className="text-foreground">Каспер</strong>, как они используются и защищаются, а также ваши права в отношении персональных данных.
+                </p>
               </div>
-              <div className="glass rounded-3xl p-5 space-y-2">
-                <h3 className="font-golos font-bold text-foreground">Использование данных</h3>
-                <ul className="space-y-2">
-                  {["Номер телефона используется для идентификации", "Сообщения хранятся на защищённых серверах", "Медиафайлы загружаются только по вашему запросу", "Аналитика не используется"].map(item => (
-                    <li key={item} className="flex items-start gap-2 text-sm text-muted-foreground">
-                      <Icon name="CheckCircle" size={14} className="text-green-400 mt-0.5 flex-shrink-0" />
-                      {item}
-                    </li>
+
+              {/* 1. Какие данные собираем */}
+              <div className="glass rounded-3xl p-5 space-y-3">
+                <h4 className="font-golos font-bold text-foreground flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-full bg-sky-500/20 text-sky-400 text-xs flex items-center justify-center font-bold">1</span>
+                  Данные, которые мы собираем
+                </h4>
+                {[
+                  { icon: "Phone", label: "Контактные данные", desc: "Номер телефона или адрес электронной почты, использованные при регистрации." },
+                  { icon: "User", label: "Данные профиля", desc: "Имя, аватар и биография, которые вы добавляете самостоятельно." },
+                  { icon: "MessageCircle", label: "Сообщения и медиафайлы", desc: "Текст, изображения, видео, документы и голосовые сообщения, отправленные через приложение." },
+                  { icon: "Clock", label: "Технические данные", desc: "Время последней активности, IP-адрес для защиты от злоупотреблений, тип браузера." },
+                ].map(item => (
+                  <div key={item.label} className="flex items-start gap-3">
+                    <div className="w-7 h-7 rounded-xl bg-white/5 border border-white/8 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <Icon name={item.icon} size={13} className="text-sky-400" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{item.label}</p>
+                      <p className="text-xs text-muted-foreground leading-relaxed mt-0.5">{item.desc}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* 2. Как используем */}
+              <div className="glass rounded-3xl p-5 space-y-3">
+                <h4 className="font-golos font-bold text-foreground flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-full bg-green-500/20 text-green-400 text-xs flex items-center justify-center font-bold">2</span>
+                  Как мы используем данные
+                </h4>
+                {[
+                  "Предоставление функций мессенджера: отправка и получение сообщений, звонки.",
+                  "Идентификация и аутентификация пользователей через OTP-коды.",
+                  "Обеспечение безопасности: защита от спама, несанкционированного доступа.",
+                  "Улучшение качества сервиса на основе агрегированной статистики (без привязки к личности).",
+                  "Отправка системных уведомлений о новых сообщениях.",
+                ].map(item => (
+                  <div key={item} className="flex items-start gap-2.5">
+                    <Icon name="CheckCircle" size={14} className="text-green-400 mt-0.5 flex-shrink-0" />
+                    <p className="text-sm text-muted-foreground leading-relaxed">{item}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* 3. Хранение и защита */}
+              <div className="glass rounded-3xl p-5 space-y-3">
+                <h4 className="font-golos font-bold text-foreground flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-full bg-purple-500/20 text-purple-400 text-xs flex items-center justify-center font-bold">3</span>
+                  Хранение и защита
+                </h4>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  Все данные передаются по зашифрованному протоколу <strong className="text-foreground">HTTPS/TLS</strong>. Данные хранятся на серверах в защищённой инфраструктуре. Мы применяем отраслевые стандарты безопасности для предотвращения утечек.
+                </p>
+                <div className="flex flex-wrap gap-2 mt-1">
+                  {["HTTPS/TLS", "Хешированные пароли", "Токены сессий", "OTP-авторизация"].map(tag => (
+                    <span key={tag} className="px-2.5 py-1 rounded-full bg-purple-500/10 border border-purple-500/20 text-xs text-purple-300">{tag}</span>
                   ))}
-                </ul>
+                </div>
               </div>
-              <div className="text-center text-xs text-muted-foreground py-2">Версия 1.0.0 · Обновлено 2025</div>
+
+              {/* 4. Передача третьим лицам */}
+              <div className="glass rounded-3xl p-5 space-y-3">
+                <h4 className="font-golos font-bold text-foreground flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-full bg-orange-500/20 text-orange-400 text-xs flex items-center justify-center font-bold">4</span>
+                  Передача данных третьим лицам
+                </h4>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  Мы <strong className="text-foreground">не продаём и не передаём</strong> ваши персональные данные третьим лицам в коммерческих целях. Данные могут быть раскрыты только по законному требованию государственных органов.
+                </p>
+                <div className="flex items-center gap-2 px-3 py-2.5 rounded-2xl bg-green-500/8 border border-green-500/15">
+                  <Icon name="ShieldCheck" size={14} className="text-green-400 flex-shrink-0" />
+                  <span className="text-xs text-green-300">Без рекламных сетей. Без аналитики третьих лиц.</span>
+                </div>
+              </div>
+
+              {/* 5. Ваши права */}
+              <div className="glass rounded-3xl p-5 space-y-3">
+                <h4 className="font-golos font-bold text-foreground flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-full bg-cyan-500/20 text-cyan-400 text-xs flex items-center justify-center font-bold">5</span>
+                  Ваши права
+                </h4>
+                {[
+                  { icon: "Eye", text: "Просмотр данных — запросите список данных, которые мы храним о вас." },
+                  { icon: "Edit3", text: "Исправление — измените имя, аватар и биографию в профиле в любое время." },
+                  { icon: "Trash2", text: "Удаление — удалите аккаунт и все данные через раздел «Профиль»." },
+                  { icon: "Download", text: "Экспорт — обратитесь в поддержку для получения архива ваших данных." },
+                ].map(item => (
+                  <div key={item.text} className="flex items-start gap-2.5">
+                    <Icon name={item.icon} size={14} className="text-cyan-400 mt-0.5 flex-shrink-0" />
+                    <p className="text-sm text-muted-foreground leading-relaxed">{item.text}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* 6. Cookie */}
+              <div className="glass rounded-3xl p-5 space-y-2">
+                <h4 className="font-golos font-bold text-foreground flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-full bg-yellow-500/20 text-yellow-400 text-xs flex items-center justify-center font-bold">6</span>
+                  Локальное хранилище (localStorage)
+                </h4>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  Приложение использует <strong className="text-foreground">localStorage</strong> браузера для сохранения сессии, темы и настроек. Данные не покидают ваше устройство и могут быть удалены в настройках браузера.
+                </p>
+              </div>
+
+              {/* 7. Контакт */}
+              <div className="glass rounded-3xl p-5 space-y-2">
+                <h4 className="font-golos font-bold text-foreground flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-full bg-slate-500/20 text-slate-400 text-xs flex items-center justify-center font-bold">7</span>
+                  Обратная связь
+                </h4>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  По вопросам обработки персональных данных обращайтесь через раздел поддержки в приложении. Мы ответим в течение 3 рабочих дней.
+                </p>
+              </div>
+
+              <div className="text-center text-xs text-muted-foreground/60 py-2 space-y-1">
+                <p>Политика конфиденциальности Каспер · Версия 1.0</p>
+                <p>Дата вступления в силу: 23 марта 2026 г.</p>
+              </div>
             </div>
           )}
 
