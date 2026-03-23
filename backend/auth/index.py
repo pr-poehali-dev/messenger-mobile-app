@@ -154,13 +154,16 @@ def handler(event: dict, context) -> dict:
 
     method = event.get("httpMethod", "GET")
     path = event.get("path", "/")
+    body_raw = event.get("body") or "{}"
+    body_pre = json.loads(body_raw)
+    action = body_pre.get("action", "") or path.split("/")[-1]
     token = event.get("headers", {}).get("X-Auth-Token") or event.get("headers", {}).get("x-auth-token")
 
     conn = get_conn()
     try:
 
-        # POST /send-code — отправить OTP на email или телефон
-        if method == "POST" and path.endswith("/send-code"):
+        # POST send-code — отправить OTP на email или телефон
+        if method == "POST" and action == "send-code":
             body = json.loads(event.get("body") or "{}")
             contact = body.get("contact", "").strip()[:200]
             purpose = body.get("purpose", "register")
@@ -239,7 +242,7 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps(resp_body)}
 
         # POST /verify-code — проверить OTP и зарегистрировать/войти
-        if method == "POST" and path.endswith("/verify-code"):
+        if method == "POST" and action == "verify-code":
             body = json.loads(event.get("body") or "{}")
             contact = body.get("contact", "").strip()
             code = body.get("code", "").strip()
@@ -325,7 +328,7 @@ def handler(event: dict, context) -> dict:
                 return {"statusCode": 200, "headers": cors, "body": json.dumps({"token": token_val, "user": user, "is_new": False})}
 
         # POST /register (оставляем для обратной совместимости)
-        if method == "POST" and path.endswith("/register"):
+        if method == "POST" and action == "register":
             body = json.loads(event.get("body") or "{}")
             name = body.get("name", "").strip()
             phone = body.get("phone", "").strip()
@@ -353,7 +356,7 @@ def handler(event: dict, context) -> dict:
                     "body": json.dumps({"token": token_val, "user": {"id": user_id, "name": name, "phone": phone, "bio": "", "status": "online", "avatar_url": None}})}
 
         # POST /login
-        if method == "POST" and path.endswith("/login"):
+        if method == "POST" and action == "login":
             body = json.loads(event.get("body") or "{}")
             phone = body.get("phone", "").strip()
             password = body.get("password", "")
@@ -376,7 +379,7 @@ def handler(event: dict, context) -> dict:
                     "body": json.dumps({"token": token_val, "user": {"id": user_id, "name": name, "phone": ph, "bio": bio or "", "status": "online", "avatar_url": avatar_url}})}
 
         # GET /me
-        if method == "GET" and path.endswith("/me"):
+        if method == "GET" and action == "me":
             if not token:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
             user = get_user_by_token(conn, token)
@@ -385,7 +388,7 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"user": user})}
 
         # POST /update-profile
-        if method == "POST" and path.endswith("/update-profile"):
+        if method == "POST" and action == "update-profile":
             if not token:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
             user = get_user_by_token(conn, token)
@@ -407,7 +410,7 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"user": updated})}
 
         # POST /upload-avatar
-        if method == "POST" and path.endswith("/upload-avatar"):
+        if method == "POST" and action == "upload-avatar":
             if not token:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
             user = get_user_by_token(conn, token)
@@ -434,7 +437,7 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"user": updated})}
 
         # POST /change-password
-        if method == "POST" and path.endswith("/change-password"):
+        if method == "POST" and action == "change-password":
             if not token:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
             user = get_user_by_token(conn, token)
@@ -458,7 +461,7 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
 
         # POST /logout
-        if method == "POST" and path.endswith("/logout"):
+        if method == "POST" and action == "logout":
             if token:
                 with conn.cursor() as cur:
                     cur.execute(f"UPDATE {SCHEMA}.sessions SET expires_at = NOW() WHERE token = %s", (token,))
@@ -466,7 +469,7 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
 
         # GET /contacts
-        if method == "GET" and path.endswith("/contacts"):
+        if method == "GET" and action == "contacts":
             if not token:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
             user = get_user_by_token(conn, token)
@@ -485,7 +488,7 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"contacts": contacts})}
 
         # POST /contacts/add
-        if method == "POST" and path.endswith("/contacts/add"):
+        if method == "POST" and action == "contacts/add":
             if not token:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
             user = get_user_by_token(conn, token)
@@ -517,7 +520,7 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"contact": {"id": contact_id, "name": name, "phone": phone, "user_id": contact_user_id, "status": status, "avatar_url": avatar_url}})}
 
         # POST /contacts/sync
-        if method == "POST" and path.endswith("/contacts/sync"):
+        if method == "POST" and action == "contacts/sync":
             if not token:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
             user = get_user_by_token(conn, token)
@@ -550,7 +553,7 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"synced": len(added), "contacts": added})}
 
         # POST /contacts/remove
-        if method == "POST" and path.endswith("/contacts/remove"):
+        if method == "POST" and action == "contacts/remove":
             if not token:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
             user = get_user_by_token(conn, token)
@@ -566,7 +569,7 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
 
         # POST /block — заблокировать пользователя
-        if method == "POST" and path.endswith("/block"):
+        if method == "POST" and action == "block":
             if not token:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
             user = get_user_by_token(conn, token)
@@ -587,7 +590,7 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "blocked": True})}
 
         # POST /unblock — разблокировать пользователя
-        if method == "POST" and path.endswith("/unblock"):
+        if method == "POST" and action == "unblock":
             if not token:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
             user = get_user_by_token(conn, token)
@@ -606,7 +609,7 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "blocked": False})}
 
         # GET /blocked-list — список заблокированных
-        if method == "GET" and "blocked-list" in path:
+        if method == "GET" and (action == "blocked-list" or "blocked-list" in path):
             if not token:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
             user = get_user_by_token(conn, token)
@@ -626,7 +629,7 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"blocked": blocked})}
 
         # GET /block-status?user_id=X — проверить статус блокировки
-        if method == "GET" and "block-status" in path:
+        if method == "GET" and (action == "block-status" or "block-status" in path):
             if not token:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
             user = get_user_by_token(conn, token)
@@ -653,7 +656,7 @@ def handler(event: dict, context) -> dict:
             })}
 
         # POST /report — пожаловаться на пользователя или сообщение
-        if method == "POST" and path.endswith("/report"):
+        if method == "POST" and action == "report":
             if not token:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
             user = get_user_by_token(conn, token)

@@ -46,6 +46,13 @@ def handler(event: dict, context) -> dict:
     path = event.get("path", "/")
     token = event.get("headers", {}).get("X-Auth-Token") or event.get("headers", {}).get("x-auth-token")
 
+    body_raw = event.get("body") or "{}"
+    try:
+        body_pre = json.loads(body_raw)
+    except:
+        body_pre = {}
+    action = body_pre.get("action", "") or path.strip("/").split("/")[-1]
+
     conn = get_conn()
     try:
         user = auth_user(conn, token)
@@ -59,10 +66,10 @@ def handler(event: dict, context) -> dict:
             cur.execute(f"UPDATE {SCHEMA}.users SET last_seen = NOW(), status = 'online' WHERE id = %s", (user_id,))
         conn.commit()
 
-        # GET /presence?chat_id=X — статус и last_seen собеседника
-        if method == "GET" and "presence" in path:
+        # presence — статус и last_seen собеседника
+        if action == "presence":
             params = event.get("queryStringParameters") or {}
-            chat_id = params.get("chat_id")
+            chat_id = body_pre.get("chat_id") or params.get("chat_id")
             if not chat_id:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id required"})}
             with conn.cursor() as cur:
@@ -85,8 +92,8 @@ def handler(event: dict, context) -> dict:
                 "last_seen": last_seen.isoformat() if last_seen else None,
             })}
 
-        # GET /  — список чатов пользователя
-        if method == "GET" and (path.endswith("/chats") or path.endswith("/chats/")):
+        # chats — список чатов пользователя
+        if action == "chats":
             from datetime import datetime, timezone, timedelta
             with conn.cursor() as cur:
                 # Оптимизированный запрос: один JOIN вместо 6 subqueries
@@ -171,10 +178,10 @@ def handler(event: dict, context) -> dict:
                     })
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"chats": chats})}
 
-        # GET /global-search?q=текст — поиск по всем сообщениям пользователя
-        if method == "GET" and "global-search" in path:
+        # global-search — поиск по всем сообщениям пользователя
+        if action == "global-search":
             params = event.get("queryStringParameters") or {}
-            q = (params.get("q") or "").strip()
+            q = (body_pre.get("q") or params.get("q") or "").strip()
             if not q or len(q) < 2:
                 return {"statusCode": 200, "headers": cors, "body": json.dumps({"results": []})}
             with conn.cursor() as cur:
@@ -186,15 +193,15 @@ def handler(event: dict, context) -> dict:
                                       WHERE cm2.chat_id = c.id AND cm2.user_id != %s LIMIT 1)
                            END AS chat_name,
                            c.is_group,
-                           sender.name AS sender_name,
+                           u.name AS sender_name,
                            (m.sender_id = %s) AS is_out
                     FROM {SCHEMA}.messages m
                     JOIN {SCHEMA}.chats c ON c.id = m.chat_id
-                    JOIN {SCHEMA}.chat_members cm ON cm.chat_id = m.chat_id AND cm.user_id = %s AND cm.hidden = FALSE
-                    JOIN {SCHEMA}.users sender ON sender.id = m.sender_id
-                    WHERE m.is_deleted = FALSE AND m.text ILIKE %s
+                    JOIN {SCHEMA}.chat_members cm ON cm.chat_id = m.chat_id AND cm.user_id = %s
+                    JOIN {SCHEMA}.users u ON u.id = m.sender_id
+                    WHERE m.text ILIKE %s AND m.hidden_at IS NULL
                     ORDER BY m.created_at DESC
-                    LIMIT 50
+                    LIMIT 30
                 """, (user_id, user_id, user_id, f"%{q}%"))
                 rows = cur.fetchall()
             results = []
@@ -211,10 +218,10 @@ def handler(event: dict, context) -> dict:
                 })
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"results": results})}
 
-        # GET /messages?chat_id=X
-        if method == "GET" and "messages" in path:
+        # messages — получить сообщения чата
+        if action == "messages":
             params = event.get("queryStringParameters") or {}
-            chat_id = params.get("chat_id")
+            chat_id = body_pre.get("chat_id") or params.get("chat_id")
             if not chat_id:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id required"})}
 
@@ -224,8 +231,8 @@ def handler(event: dict, context) -> dict:
                 if not cur.fetchone():
                     return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Нет доступа"})}
 
-                before_id = params.get("before_id")
-                around_id = params.get("around_id")
+                before_id = body_pre.get("before_id") or params.get("before_id")
+                around_id = body_pre.get("around_id") or params.get("around_id")
                 MSG_COLS = f"""m.id, m.sender_id, u.name, m.text, m.is_read, m.created_at,
                                m.file_url, m.file_name, m.file_size, m.file_type,
                                m.is_edited, m.hidden_at,
@@ -334,9 +341,9 @@ def handler(event: dict, context) -> dict:
 
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"messages": messages, "has_more": has_more, "pinned": pinned})}
 
-        # POST /send — отправить сообщение (текст или файл)
-        if method == "POST" and "send" in path:
-            body = json.loads(event.get("body") or "{}")
+        # send — отправить сообщение (текст или файл)
+        if action == "send":
+            body = body_pre
             chat_id = body.get("chat_id")
             text = (body.get("text") or "").strip()
             file_url = body.get("file_url") or None
@@ -373,49 +380,66 @@ def handler(event: dict, context) -> dict:
                     cur.execute(f"""
                         SELECT cm.user_id FROM {SCHEMA}.chat_members cm
                         JOIN {SCHEMA}.chats c ON c.id = cm.chat_id
-                        WHERE cm.chat_id = %s AND cm.user_id != %s AND c.is_group = FALSE
+                        WHERE cm.chat_id = %s AND cm.user_id != %s AND NOT c.is_group
                         LIMIT 1
                     """, (chat_id, user_id))
                     peer_row = cur.fetchone()
                     if peer_row:
                         peer_id = peer_row[0]
                         cur.execute(f"""
-                            SELECT COUNT(*) FROM {SCHEMA}.blocked_users
-                            WHERE is_active = TRUE AND (
-                                (blocker_id = %s AND blocked_id = %s) OR
-                                (blocker_id = %s AND blocked_id = %s)
-                            )
+                            SELECT 1 FROM {SCHEMA}.blocks
+                            WHERE (blocker_id = %s AND blocked_id = %s)
+                               OR (blocker_id = %s AND blocked_id = %s)
                         """, (user_id, peer_id, peer_id, user_id))
-                        if cur.fetchone()[0] > 0:
-                            return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Нельзя отправить сообщение: пользователь заблокирован"})}
+                        if cur.fetchone():
+                            return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Переписка заблокирована"})}
 
+                    # Проверяем права в канале
+                    cur.execute(f"""
+                        SELECT c.is_channel, cm.can_post, cm.role
+                        FROM {SCHEMA}.chats c
+                        JOIN {SCHEMA}.chat_members cm ON cm.chat_id = c.id AND cm.user_id = %s
+                        WHERE c.id = %s
+                    """, (user_id, chat_id))
+                    chat_row = cur.fetchone()
+                    if chat_row and chat_row[0]:  # is_channel
+                        can_post = chat_row[1]
+                        role = chat_row[2]
+                        if not can_post and role not in ("admin", "moderator"):
+                            return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Нет права на публикацию"})}
+
+                    # Получаем reply_to данные
                     reply_text = None
                     reply_name = None
                     if reply_to_id:
                         cur.execute(f"""
                             SELECT m.text, u.name FROM {SCHEMA}.messages m
                             JOIN {SCHEMA}.users u ON u.id = m.sender_id
-                            WHERE m.id = %s
-                        """, (reply_to_id,))
+                            WHERE m.id = %s AND m.chat_id = %s
+                        """, (reply_to_id, chat_id))
                         rr = cur.fetchone()
                         if rr:
-                            reply_text = (rr[0] or "")[:200]
+                            reply_text = rr[0]
                             reply_name = rr[1]
 
-                    cur.execute(
-                        f"""INSERT INTO {SCHEMA}.messages
-                            (chat_id, sender_id, text, file_url, file_name, file_size, file_type,
-                             reply_to_id, reply_to_text, reply_to_name)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            RETURNING id, created_at""",
-                        (chat_id, user_id, text or "", file_url, file_name, file_size, file_type,
-                         reply_to_id, reply_text, reply_name)
-                    )
+                    cur.execute(f"""
+                        INSERT INTO {SCHEMA}.messages
+                            (chat_id, sender_id, text, file_url, file_name, file_size, file_type, reply_to_id, reply_to_text, reply_to_name)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id, created_at
+                    """, (chat_id, user_id, text or None, file_url, file_name, file_size, file_type, reply_to_id, reply_text, reply_name))
                     msg_id, created_at = cur.fetchone()
+
+                    # Восстанавливаем скрытый чат у получателя (если был скрыт)
+                    cur.execute(f"""
+                        UPDATE {SCHEMA}.chat_members SET hidden = FALSE
+                        WHERE chat_id = %s AND user_id != %s AND hidden = TRUE
+                    """, (chat_id, user_id))
+
                 conn.commit()
             except Exception as e:
                 conn.rollback()
-                return {"statusCode": 500, "headers": cors, "body": json.dumps({"error": "Ошибка сохранения сообщения"})}
+                return {"statusCode": 500, "headers": cors, "body": json.dumps({"error": str(e)})}
 
             # Send push notifications to other chat members
             if WEBPUSH_AVAILABLE:
@@ -457,9 +481,9 @@ def handler(event: dict, context) -> dict:
                 })
             }
 
-        # POST /pin-message — закрепить / открепить сообщение (только admin или для личного чата)
-        if method == "POST" and "pin-message" in path:
-            body = json.loads(event.get("body") or "{}")
+        # pin-message — закрепить / открепить сообщение (только admin или для личного чата)
+        if action == "pin-message":
+            body = body_pre
             message_id = body.get("message_id")
             pin = body.get("pin", True)  # True = закрепить, False = открепить
             if not message_id:
@@ -482,9 +506,9 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "pinned": pin})}
 
-        # POST /edit-message — редактировать своё сообщение
-        if method == "POST" and "edit-message" in path:
-            body = json.loads(event.get("body") or "{}")
+        # edit-message — редактировать своё сообщение
+        if action == "edit-message":
+            body = body_pre
             message_id = body.get("message_id")
             new_text = (body.get("text") or "").strip()
             if not message_id or not new_text:
@@ -501,9 +525,9 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"id": row[0], "text": row[1], "is_edited": row[2]})}
 
-        # POST /delete-message — удалить своё сообщение (скрыть)
-        if method == "POST" and "delete-message" in path:
-            body = json.loads(event.get("body") or "{}")
+        # delete-message — удалить своё сообщение (скрыть)
+        if action == "delete-message":
+            body = body_pre
             message_id = body.get("message_id")
             if not message_id:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "message_id обязателен"})}
@@ -519,9 +543,9 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "id": row[0]})}
 
-        # POST /read — пометить сообщение как прочитанное
-        if method == "POST" and path.endswith("/read"):
-            body = json.loads(event.get("body") or "{}")
+        # read — пометить сообщение как прочитанное
+        if action == "read":
+            body = body_pre
             message_id = body.get("message_id")
             if not message_id:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "message_id обязателен"})}
@@ -535,9 +559,9 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "updated": row is not None})}
 
-        # POST /react — поставить или снять реакцию
-        if method == "POST" and "react" in path:
-            body = json.loads(event.get("body") or "{}")
+        # react — поставить или снять реакцию
+        if action == "react":
+            body = body_pre
             message_id = body.get("message_id")
             emoji = (body.get("emoji") or "").strip()
             if not message_id or not emoji:
@@ -592,8 +616,8 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"reactions": reactions, "toggled": toggled})}
 
-        # POST /upload — загрузить файл в S3
-        if method == "POST" and "upload" in path:
+        # upload — загрузить файл в S3
+        if action == "upload":
             # ── Rate limit: не более 20 загрузок в час ──
             with conn.cursor() as cur:
                 cur.execute(f"""
@@ -604,7 +628,7 @@ def handler(event: dict, context) -> dict:
                 if cur.fetchone()[0] >= 20:
                     return {"statusCode": 429, "headers": cors, "body": json.dumps({"error": "Слишком много загрузок. Попробуйте позже"})}
 
-            body = json.loads(event.get("body") or "{}")
+            body = body_pre
             file_b64 = body.get("file") or body.get("file_data")
             file_name = (body.get("file_name") or "file").strip()[:255]
             file_type = (body.get("file_type") or "application/octet-stream").strip()[:100]
@@ -673,9 +697,9 @@ def handler(event: dict, context) -> dict:
                 })
             }
 
-        # POST /create — создать чат, группу или канал
-        if method == "POST" and "create" in path:
-            body = json.loads(event.get("body") or "{}")
+        # create — создать чат, группу или канал
+        if action == "create":
+            body = body_pre
             is_group = body.get("is_group", False)
             is_channel = body.get("is_channel", False)
             name = (body.get("name") or "").strip()
@@ -714,41 +738,56 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"chat_id": chat_id, "is_channel": is_channel})}
 
-        # POST /typing — сообщить что пользователь печатает
-        if method == "POST" and "typing" in path:
-            body = json.loads(event.get("body") or "{}")
-            chat_id = body.get("chat_id")
-            if not chat_id:
-                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id required"})}
-            with conn.cursor() as cur:
-                cur.execute(f"""
-                    INSERT INTO typing_status (chat_id, user_id, user_name, updated_at)
-                    VALUES (%s, %s, %s, NOW())
-                    ON CONFLICT (chat_id, user_id) DO UPDATE SET updated_at = NOW()
-                """, (chat_id, user_id, user["name"]))
-            conn.commit()
-            return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
+        # typing POST — сообщить что пользователь печатает
+        # typing GET — кто сейчас печатает в чате
+        if action == "typing":
+            if method == "POST" or body_pre.get("chat_id"):
+                body = body_pre
+                chat_id = body.get("chat_id")
+                if not chat_id:
+                    return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id required"})}
+                # If no text body (GET-style ping), return typists
+                if method == "GET":
+                    params = event.get("queryStringParameters") or {}
+                    chat_id = body_pre.get("chat_id") or params.get("chat_id")
+                    if not chat_id:
+                        return {"statusCode": 400, "headers": cors, "body": json.dumps({"typists": []})}
+                    with conn.cursor() as cur:
+                        cur.execute(f"""
+                            SELECT user_name FROM typing_status
+                            WHERE chat_id = %s AND user_id != %s
+                            AND updated_at > NOW() - INTERVAL '4 seconds'
+                        """, (chat_id, user_id))
+                        rows = cur.fetchall()
+                    typists = [r[0] for r in rows]
+                    return {"statusCode": 200, "headers": cors, "body": json.dumps({"typists": typists})}
+                with conn.cursor() as cur:
+                    cur.execute(f"""
+                        INSERT INTO typing_status (chat_id, user_id, user_name, updated_at)
+                        VALUES (%s, %s, %s, NOW())
+                        ON CONFLICT (chat_id, user_id) DO UPDATE SET updated_at = NOW()
+                    """, (chat_id, user_id, user["name"]))
+                conn.commit()
+                return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
+            else:
+                params = event.get("queryStringParameters") or {}
+                chat_id = body_pre.get("chat_id") or params.get("chat_id")
+                if not chat_id:
+                    return {"statusCode": 400, "headers": cors, "body": json.dumps({"typists": []})}
+                with conn.cursor() as cur:
+                    cur.execute(f"""
+                        SELECT user_name FROM typing_status
+                        WHERE chat_id = %s AND user_id != %s
+                        AND updated_at > NOW() - INTERVAL '4 seconds'
+                    """, (chat_id, user_id))
+                    rows = cur.fetchall()
+                typists = [r[0] for r in rows]
+                return {"statusCode": 200, "headers": cors, "body": json.dumps({"typists": typists})}
 
-        # GET /typing — кто сейчас печатает в чате
-        if method == "GET" and "typing" in path:
+        # stats — статистика чата
+        if action == "stats":
             params = event.get("queryStringParameters") or {}
-            chat_id = params.get("chat_id")
-            if not chat_id:
-                return {"statusCode": 400, "headers": cors, "body": json.dumps({"typists": []})}
-            with conn.cursor() as cur:
-                cur.execute(f"""
-                    SELECT user_name FROM typing_status
-                    WHERE chat_id = %s AND user_id != %s
-                    AND updated_at > NOW() - INTERVAL '4 seconds'
-                """, (chat_id, user_id))
-                rows = cur.fetchall()
-            typists = [r[0] for r in rows]
-            return {"statusCode": 200, "headers": cors, "body": json.dumps({"typists": typists})}
-
-        # GET /stats — статистика чата
-        if method == "GET" and "stats" in path:
-            params = event.get("queryStringParameters") or {}
-            chat_id = params.get("chat_id")
+            chat_id = body_pre.get("chat_id") or params.get("chat_id")
             if not chat_id:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id required"})}
             with conn.cursor() as cur:
@@ -781,10 +820,10 @@ def handler(event: dict, context) -> dict:
                 "days_active": days_active,
             })}
 
-        # GET /members — список участников чата с ролями
-        if method == "GET" and "members" in path:
+        # members — список участников чата с ролями
+        if action == "members":
             params = event.get("queryStringParameters") or {}
-            chat_id = params.get("chat_id")
+            chat_id = body_pre.get("chat_id") or params.get("chat_id")
             if not chat_id:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id required"})}
             with conn.cursor() as cur:
@@ -803,9 +842,9 @@ def handler(event: dict, context) -> dict:
             members = [{"id": r[0], "name": r[1], "status": r[2], "role": r[3], "can_post": bool(r[4]), "is_me": r[0] == user_id, "avatar_url": r[5]} for r in rows]
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"members": members})}
 
-        # POST /leave — покинуть группу
-        if method == "POST" and "leave" in path:
-            body = json.loads(event.get("body") or "{}")
+        # leave — покинуть группу
+        if action == "leave":
+            body = body_pre
             chat_id = body.get("chat_id")
             if not chat_id:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id required"})}
@@ -824,9 +863,9 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
 
-        # POST /kick — удалить участника (только для админов)
-        if method == "POST" and "kick" in path:
-            body = json.loads(event.get("body") or "{}")
+        # kick — удалить участника (только для админов)
+        if action == "kick":
+            body = body_pre
             chat_id = body.get("chat_id")
             target_id = body.get("user_id")
             if not chat_id or not target_id:
@@ -849,9 +888,9 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
 
-        # POST /update-chat — обновить название, описание, публичность (только admin)
-        if method == "POST" and "update-chat" in path:
-            body = json.loads(event.get("body") or "{}")
+        # update-chat — обновить название, описание, публичность (только admin)
+        if action == "update-chat":
+            body = body_pre
             chat_id = body.get("chat_id")
             if not chat_id:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id обязателен"})}
@@ -878,9 +917,9 @@ def handler(event: dict, context) -> dict:
                 "ok": True, "name": r[0], "description": r[1], "is_public": r[2], "is_channel": r[3]
             })}
 
-        # POST /upload-group-avatar — загрузить фото группы/канала (только admin)
-        if method == "POST" and "upload-group-avatar" in path:
-            body = json.loads(event.get("body") or "{}")
+        # upload-group-avatar — загрузить фото группы/канала (только admin)
+        if action == "upload-group-avatar":
+            body = body_pre
             chat_id = body.get("chat_id")
             data_url = body.get("image", "")
             if not chat_id:
@@ -908,9 +947,9 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "avatar_url": cdn_url})}
 
-        # POST /set-role — назначить/изменить роль участника (только admin)
-        if method == "POST" and "set-role" in path:
-            body = json.loads(event.get("body") or "{}")
+        # set-role — назначить/изменить роль участника (только admin)
+        if action == "set-role":
+            body = body_pre
             chat_id = body.get("chat_id")
             target_id = body.get("user_id")
             new_role = body.get("role")
@@ -933,9 +972,9 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
 
-        # POST /add-members — добавить участников в группу/канал (только admin)
-        if method == "POST" and "add-members" in path:
-            body = json.loads(event.get("body") or "{}")
+        # add-members — добавить участников в группу/канал (только admin)
+        if action == "add-members":
+            body = body_pre
             chat_id = body.get("chat_id")
             new_members = body.get("members", [])
             if not chat_id or not new_members:
@@ -957,10 +996,10 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "added": added})}
 
-        # GET /users — поиск пользователей для добавления
-        if method == "GET" and "users" in path:
+        # users — поиск пользователей для добавления
+        if action == "users":
             params = event.get("queryStringParameters") or {}
-            q = params.get("q", "").strip()
+            q = (body_pre.get("q") or params.get("q") or "").strip()
             with conn.cursor() as cur:
                 cur.execute(f"""
                     SELECT id, name, phone, status, avatar_url FROM {SCHEMA}.users
@@ -971,13 +1010,13 @@ def handler(event: dict, context) -> dict:
             users = [{"id": r[0], "name": r[1], "phone": r[2], "status": r[3], "avatar_url": r[4]} for r in rows]
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"users": users})}
 
-        # GET /vapid-public-key — отдать публичный VAPID ключ фронтенду
-        if method == "GET" and "vapid-public-key" in path:
+        # vapid-public-key — отдать публичный VAPID ключ фронтенду
+        if action == "vapid-public-key":
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"public_key": os.environ.get("VAPID_PUBLIC_KEY", "")})}
 
-        # POST /pin-chat — закрепить / открепить чат для текущего пользователя
-        if method == "POST" and "pin-chat" in path:
-            body = json.loads(event.get("body") or "{}")
+        # pin-chat — закрепить / открепить чат для текущего пользователя
+        if action == "pin-chat":
+            body = body_pre
             chat_id = body.get("chat_id")
             pin = body.get("pin", True)
             if not chat_id:
@@ -990,10 +1029,10 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "pinned": pin})}
 
-        # POST /mute-chat — отключить / включить уведомления для чата
-        if method == "POST" and "mute-chat" in path:
+        # mute-chat — отключить / включить уведомления для чата
+        if action == "mute-chat":
             from datetime import datetime, timezone, timedelta
-            body = json.loads(event.get("body") or "{}")
+            body = body_pre
             chat_id = body.get("chat_id")
             mute = body.get("mute", True)
             minutes = body.get("minutes")  # None = навсегда, число = на N минут
@@ -1011,9 +1050,9 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "muted": mute, "muted_until": muted_until.isoformat() if muted_until else None})}
 
-        # POST /delete-chat — полное удаление группы/канала (только owner/admin)
-        if method == "POST" and "delete-chat" in path:
-            body = json.loads(event.get("body") or "{}")
+        # delete-chat — полное удаление группы/канала (только owner/admin)
+        if action == "delete-chat":
+            body = body_pre
             chat_id = body.get("chat_id")
             if not chat_id:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id обязателен"})}
@@ -1032,9 +1071,9 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
 
-        # POST /hide-chat — скрыть личный чат для себя (мягкое удаление)
-        if method == "POST" and "hide-chat" in path:
-            body = json.loads(event.get("body") or "{}")
+        # hide-chat — скрыть личный чат для себя (мягкое удаление)
+        if action == "hide-chat":
+            body = body_pre
             chat_id = body.get("chat_id")
             if not chat_id:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id обязателен"})}
@@ -1046,9 +1085,9 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
 
-        # POST /subscribe — сохранить push-подписку устройства
-        if method == "POST" and "subscribe" in path:
-            body = json.loads(event.get("body") or "{}")
+        # subscribe — сохранить push-подписку устройства
+        if action == "subscribe":
+            body = body_pre
             endpoint = body.get("endpoint")
             p256dh = (body.get("keys") or {}).get("p256dh")
             auth_key = (body.get("keys") or {}).get("auth")
@@ -1063,8 +1102,8 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
 
-        # POST /delete-account — полное удаление аккаунта пользователя
-        if method == "POST" and "delete-account" in path:
+        # delete-account — полное удаление аккаунта пользователя
+        if action == "delete-account":
             with conn.cursor() as cur:
                 # Анонимизируем сообщения (текст сохраняем, имя сбрасываем)
                 cur.execute(f"UPDATE {SCHEMA}.users SET name = 'Удалённый пользователь', phone = NULL, bio = NULL, status = 'offline' WHERE id = %s", (user_id,))

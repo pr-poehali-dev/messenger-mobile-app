@@ -178,12 +178,10 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User, isNew?: bo
     if (mode === "register" && !name.trim()) { setError("Введите имя"); return; }
     setLoading(true);
     try {
-      const res = await fetch(`${AUTH_URL}/send-code`, {
+      const res = await fetch(AUTH_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contact: c, purpose: mode }),
-        mode: "cors",
-        credentials: "omit",
+        body: JSON.stringify({ action: "send-code", contact: c, purpose: mode }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error || "Ошибка"); return; }
@@ -203,9 +201,9 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User, isNew?: bo
     if (code.length !== 6) { setError("Введите 6-значный код"); return; }
     setError(""); setLoading(true);
     try {
-      const res = await fetch(`${AUTH_URL}/verify-code`, {
+      const res = await fetch(AUTH_URL, {
         method: "POST", headers: apiHeaders(),
-        body: JSON.stringify({ contact: contact.trim(), code, purpose: mode, name: name.trim() }),
+        body: JSON.stringify({ action: "verify-code", contact: contact.trim(), code, purpose: mode, name: name.trim() }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error || "Неверный код"); return; }
@@ -752,7 +750,7 @@ function VoicePlayer({ src, isOut, isRead, msgId, token, onRead }: {
     else {
       a.play().then(() => { setPlaying(true); }).catch(() => {});
       if (!isOut && !isRead && typeof msgId === "number") {
-        fetch(`${CHATS_URL}/read`, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ message_id: msgId }) })
+        fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "read", message_id: msgId }) })
           .then(() => onRead?.()).catch(() => {});
       }
     }
@@ -905,7 +903,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     if (chat.is_group) return;
     async function pollPresence() {
       try {
-        const res = await fetch(`${CHATS_URL}/presence?chat_id=${chat.id}`, { headers: apiHeaders(token) });
+        const res = await fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "presence", chat_id: chat.id }) });
         const data = await res.json();
         setPeerStatus({ online: data.status === "online", last_seen: data.last_seen });
       } catch { /* ignore */ }
@@ -918,7 +916,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
   // Загружаем статус блокировки для личных чатов
   useEffect(() => {
     if (chat.is_group || !chat.peer_id) return;
-    fetch(`${AUTH_URL}/block-status?user_id=${chat.peer_id}`, { headers: apiHeaders(token) })
+    fetch(AUTH_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "block-status", user_id: chat.peer_id }) })
       .then(r => r.json())
       .then(d => { setIsBlocked(!!d.i_blocked); setBlockedMe(!!d.blocked_me); })
       .catch(() => {});
@@ -938,7 +936,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
 
   const loadMessages = useCallback(async (silent = false) => {
     try {
-      const res = await fetch(`${CHATS_URL}/messages?chat_id=${chat.id}`, { headers: apiHeaders(token) });
+      const res = await fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "messages", chat_id: chat.id }) });
       if (!res.ok) return;
       const data = await res.json();
       if (data.has_more !== undefined) setHasMore(data.has_more);
@@ -1013,7 +1011,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     try {
       const firstId = messagesRef.current[0]?.id;
       if (!firstId || String(firstId).startsWith("opt-")) return;
-      const res = await fetch(`${CHATS_URL}/messages?chat_id=${chat.id}&before_id=${firstId}`, { headers: apiHeaders(token) });
+      const res = await fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "messages", chat_id: chat.id, before_id: firstId }) });
       const data = await res.json();
       if (data.has_more !== undefined) setHasMore(data.has_more);
       if (data.messages?.length) {
@@ -1043,7 +1041,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     } else if (!aroundLoadDone.current) {
       // Сообщение не в текущей порции — грузим контекст вокруг него
       aroundLoadDone.current = true;
-      fetch(`${CHATS_URL}/messages?chat_id=${chat.id}&around_id=${initialMsgId}`, { headers: apiHeaders(token) })
+      fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "messages", chat_id: chat.id, around_id: initialMsgId }) })
         .then(r => r.json())
         .then(data => {
           if (data.messages?.length) {
@@ -1075,7 +1073,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
   useEffect(() => {
     const poll = async () => {
       try {
-        const res = await fetch(`${CHATS_URL}/typing?chat_id=${chat.id}`, { headers: apiHeaders(token) });
+        const res = await fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "typing", chat_id: chat.id }) });
         const data = await res.json();
         setTypists(data.typists ?? []);
       } catch { /* ignore */ }
@@ -1088,9 +1086,9 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
   function sendTyping() {
     if (isTypingSent.current) return;
     isTypingSent.current = true;
-    fetch(`${CHATS_URL}/typing`, {
+    fetch(CHATS_URL, {
       method: "POST", headers: apiHeaders(token),
-      body: JSON.stringify({ chat_id: chat.id }),
+      body: JSON.stringify({ action: "typing", chat_id: chat.id }),
     }).catch(() => {});
     // Reset flag after 3s so next keystroke fires again
     if (typingTimer.current) clearTimeout(typingTimer.current);
@@ -1101,7 +1099,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     if (!chat.is_group) return;
     setMembersLoading(true);
     try {
-      const res = await fetch(`${CHATS_URL}/members?chat_id=${chat.id}`, { headers: apiHeaders(token) });
+      const res = await fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "members", chat_id: chat.id }) });
       const data = await res.json();
       if (data.members) setMembers(data.members);
     } finally { setMembersLoading(false); }
@@ -1114,9 +1112,9 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
 
   async function leaveGroup() {
     try {
-      await fetch(`${CHATS_URL}/leave`, {
+      await fetch(CHATS_URL, {
         method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ chat_id: chat.id }),
+        body: JSON.stringify({ action: "leave", chat_id: chat.id }),
       });
       setLeftGroup(true);
       setTimeout(() => onBack(), 800);
@@ -1125,9 +1123,9 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
 
   async function kickMember(memberId: number) {
     try {
-      await fetch(`${CHATS_URL}/kick`, {
+      await fetch(CHATS_URL, {
         method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ chat_id: chat.id, user_id: memberId }),
+        body: JSON.stringify({ action: "kick", chat_id: chat.id, user_id: memberId }),
       });
       setMembers(prev => prev.filter(m => m.id !== memberId));
       loadMessages(true);
@@ -1143,9 +1141,9 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
       const reader = new FileReader();
       reader.onload = async (e) => {
         const dataUrl = e.target?.result as string;
-        const res = await fetch(`${CHATS_URL}/upload-group-avatar`, {
+        const res = await fetch(CHATS_URL, {
           method: "POST", headers: apiHeaders(token),
-          body: JSON.stringify({ chat_id: chat.id, image: dataUrl }),
+          body: JSON.stringify({ action: "upload-group-avatar", chat_id: chat.id, image: dataUrl }),
         });
         const data = await res.json();
         if (data.avatar_url) onChatUpdate?.({ avatar_url: data.avatar_url });
@@ -1158,9 +1156,9 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
   async function saveEditChat() {
     setEditSaving(true);
     try {
-      const res = await fetch(`${CHATS_URL}/update-chat`, {
+      const res = await fetch(CHATS_URL, {
         method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ chat_id: chat.id, name: editName, description: editDesc, is_public: editPublic }),
+        body: JSON.stringify({ action: "update-chat", chat_id: chat.id, name: editName, description: editDesc, is_public: editPublic }),
       });
       const data = await res.json();
       if (data.ok) {
@@ -1176,9 +1174,9 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
 
   async function setMemberRole(memberId: number, role: string, canPost?: boolean) {
     try {
-      await fetch(`${CHATS_URL}/set-role`, {
+      await fetch(CHATS_URL, {
         method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ chat_id: chat.id, user_id: memberId, role, can_post: canPost }),
+        body: JSON.stringify({ action: "set-role", chat_id: chat.id, user_id: memberId, role, can_post: canPost }),
       });
       setMembers(prev => prev.map(m => m.id === memberId ? { ...m, role, can_post: canPost ?? m.can_post } : m));
     } catch { /* ignore */ }
@@ -1189,7 +1187,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     if (!q.trim()) { setAddMemberResults([]); return; }
     setAddMemberLoading(true);
     try {
-      const res = await fetch(`${CHATS_URL}/users?q=${encodeURIComponent(q)}`, { headers: apiHeaders(token) });
+      const res = await fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "users", q }) });
       const data = await res.json();
       if (data.users) {
         const memberIds = new Set(members.map(m => m.id));
@@ -1200,9 +1198,9 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
 
   async function addMember(userId: number, userName: string) {
     try {
-      await fetch(`${CHATS_URL}/add-members`, {
+      await fetch(CHATS_URL, {
         method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ chat_id: chat.id, members: [userId] }),
+        body: JSON.stringify({ action: "add-members", chat_id: chat.id, members: [userId] }),
       });
       setMembers(prev => [...prev, { id: userId, name: userName, status: "offline", role: "member", can_post: !chat.is_channel, is_me: false }]);
       setAddMemberSearch(""); setAddMemberResults([]);
@@ -1224,9 +1222,9 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     const markRead = async (msgId: number) => {
       setMessages(prev => prev.map(m => m.id === msgId ? { ...m, is_read: true } : m));
       onMessageRead?.();
-      await fetch(`${CHATS_URL}/read`, {
+      await fetch(CHATS_URL, {
         method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ message_id: msgId }),
+        body: JSON.stringify({ action: "read", message_id: msgId }),
       }).catch(() => {});
     };
 
@@ -1267,9 +1265,9 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
       return { ...m, reactions: updated };
     }));
     try {
-      const res = await fetch(`${CHATS_URL}/react`, {
+      const res = await fetch(CHATS_URL, {
         method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ message_id: msgId, emoji }),
+        body: JSON.stringify({ action: "react", message_id: msgId, emoji }),
       });
       const data = await res.json();
       if (data.reactions !== undefined) {
@@ -1282,9 +1280,10 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     if (!forwardMsg) return;
     setForwarding(targetChatId);
     try {
-      await fetch(`${CHATS_URL}/send`, {
+      await fetch(CHATS_URL, {
         method: "POST", headers: apiHeaders(token),
         body: JSON.stringify({
+          action: "send",
           chat_id: targetChatId,
           text: forwardMsg.text || "",
           file_url: forwardMsg.file_url, file_name: forwardMsg.file_name, file_type: forwardMsg.file_type,
@@ -1304,9 +1303,9 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
       setPinnedMsg(null);
     }
     setMessages(prev => prev.map(m => m.id === msgId ? { ...m, is_pinned: pin } : pin ? { ...m, is_pinned: false } : m));
-    fetch(`${CHATS_URL}/pin-message`, {
+    fetch(CHATS_URL, {
       method: "POST", headers: apiHeaders(token),
-      body: JSON.stringify({ message_id: msgId, pin }),
+      body: JSON.stringify({ action: "pin-message", message_id: msgId, pin }),
     }).catch(() => {});
   }
 
@@ -1316,9 +1315,9 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     setShowBlockMenu(false);
     try {
       const endpoint = isBlocked ? "/unblock" : "/block";
-      const res = await fetch(`${AUTH_URL}${endpoint}`, {
+      const res = await fetch(AUTH_URL, {
         method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ user_id: chat.peer_id }),
+        body: JSON.stringify({ action: endpoint.replace("/", ""), user_id: chat.peer_id }),
       });
       const data = await res.json();
       if (data.ok) setIsBlocked(!isBlocked);
@@ -1330,10 +1329,10 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     if (!reportReason) return;
     setReportLoading(true);
     try {
-      const body: Record<string, unknown> = { reason: reportReason, comment: reportComment };
+      const body: Record<string, unknown> = { action: "report", reason: reportReason, comment: reportComment };
       if (reportMsgId) body.message_id = reportMsgId;
       else if (chat.peer_id) body.user_id = chat.peer_id;
-      const res = await fetch(`${AUTH_URL}/report`, {
+      const res = await fetch(AUTH_URL, {
         method: "POST", headers: apiHeaders(token),
         body: JSON.stringify(body),
       });
@@ -1347,7 +1346,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     if (stats || statsLoading) return;
     setStatsLoading(true);
     try {
-      const res = await fetch(`${CHATS_URL}/stats?chat_id=${chat.id}`, { headers: apiHeaders(token) });
+      const res = await fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "stats", chat_id: chat.id }) });
       const data = await res.json();
       if (data.total_messages !== undefined) setStats(data);
     } finally { setStatsLoading(false); }
@@ -1363,9 +1362,9 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     setEditingMsg(null);
     setMessages(prev => prev.map(m => m.id === msgId ? { ...m, text: newText, is_edited: true } : m));
     try {
-      const res = await fetch(`${CHATS_URL}/edit-message`, {
+      const res = await fetch(CHATS_URL, {
         method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ message_id: msgId, text: newText }),
+        body: JSON.stringify({ action: "edit-message", message_id: msgId, text: newText }),
       });
       const data = await res.json();
       if (data.text) {
@@ -1378,9 +1377,9 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     setMenuMsgId(null);
     setMessages(prev => prev.map(m => m.id === msgId ? { ...m, is_deleted: true, text: "" } : m));
     try {
-      await fetch(`${CHATS_URL}/delete-message`, {
+      await fetch(CHATS_URL, {
         method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ message_id: msgId }),
+        body: JSON.stringify({ action: "delete-message", message_id: msgId }),
       });
     } catch { /* keep optimistic */ }
   }
@@ -1404,9 +1403,9 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
         reader.onerror = reject;
         reader.readAsDataURL(file);
       });
-      const res = await fetch(`${CHATS_URL}/upload`, {
+      const res = await fetch(CHATS_URL, {
         method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ file: b64, file_name: file.name, file_type: file.type }),
+        body: JSON.stringify({ action: "upload", file: b64, file_name: file.name, file_type: file.type }),
       });
       const data = await res.json();
       if (data.file_url) {
@@ -1472,9 +1471,9 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
   async function doSend(optId: string, payload: { text: string; file_url?: string | null; file_name?: string | null; file_size?: number | null; file_type?: string | null; reply_to_id?: number | null }) {
     setMessages(prev => prev.map(m => m.id === optId ? { ...m, _failed: false } : m));
     try {
-      const res = await fetch(`${CHATS_URL}/send`, {
+      const res = await fetch(CHATS_URL, {
         method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ chat_id: chat.id, ...payload }),
+        body: JSON.stringify({ action: "send", chat_id: chat.id, ...payload }),
       });
       const data = await res.json();
       if (data.message) {
@@ -1630,16 +1629,16 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
         reader.onerror = rej;
       });
       const base64 = dataUrl.split(",")[1];
-      const upRes = await fetch(`${CHATS_URL}/upload`, {
+      const upRes = await fetch(CHATS_URL, {
         method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ file_data: base64, file_name: `voice_${Date.now()}.${ext}`, file_type: mimeType }),
+        body: JSON.stringify({ action: "upload", file_data: base64, file_name: `voice_${Date.now()}.${ext}`, file_type: mimeType }),
       });
       const upData = await upRes.json();
       if (!upData.url) throw new Error("Upload failed");
 
-      const sendRes = await fetch(`${CHATS_URL}/send`, {
+      const sendRes = await fetch(CHATS_URL, {
         method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ chat_id: chat.id, text: "", file_url: upData.url, file_name: optimistic.file_name, file_size: blob.size, file_type: mimeType }),
+        body: JSON.stringify({ action: "send", chat_id: chat.id, text: "", file_url: upData.url, file_name: optimistic.file_name, file_size: blob.size, file_type: mimeType }),
       });
       const sendData = await sendRes.json();
       if (sendData.message) {
@@ -2753,7 +2752,7 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall, openChatId, onC
 
   const loadChats = useCallback(async () => {
     try {
-      const res = await fetch(`${CHATS_URL}/chats`, { headers: apiHeaders(token) });
+      const res = await fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "chats" }) });
       const data = await res.json();
       if (data.chats) setChats(data.chats);
     } finally { setLoading(false); }
@@ -2789,7 +2788,7 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall, openChatId, onC
 
   async function searchUsers(q: string) {
     if (!q.trim()) { setFoundUsers([]); return; }
-    const res = await fetch(`${CHATS_URL}/users?q=${encodeURIComponent(q)}`, { headers: apiHeaders(token) });
+    const res = await fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "users", q }) });
     const data = await res.json();
     if (data.users) setFoundUsers(data.users);
   }
@@ -2800,13 +2799,13 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall, openChatId, onC
   }
 
   async function startChat(userId: number) {
-    const res = await fetch(`${CHATS_URL}/create`, {
+    const res = await fetch(CHATS_URL, {
       method: "POST", headers: apiHeaders(token),
-      body: JSON.stringify({ is_group: false, members: [userId] }),
+      body: JSON.stringify({ action: "create", is_group: false, members: [userId] }),
     });
     const data = await res.json();
     if (data.chat_id) {
-      const chatRes = await fetch(`${CHATS_URL}/chats`, { headers: apiHeaders(token) });
+      const chatRes = await fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "chats" }) });
       const chatData = await chatRes.json();
       if (chatData.chats) {
         setChats(chatData.chats);
@@ -2822,9 +2821,10 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall, openChatId, onC
     setGroupCreating(true);
     try {
       const isChannel = createMode === "channel";
-      const res = await fetch(`${CHATS_URL}/create`, {
+      const res = await fetch(CHATS_URL, {
         method: "POST", headers: apiHeaders(token),
         body: JSON.stringify({
+          action: "create",
           is_group: !isChannel,
           is_channel: isChannel,
           name: groupName.trim(),
@@ -2849,9 +2849,9 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall, openChatId, onC
   async function togglePin(chat: Chat) {
     const pin = !chat.pinned;
     setChats(prev => prev.map(c => c.id === chat.id ? { ...c, pinned: pin } : c));
-    await fetch(`${CHATS_URL}/pin-chat`, {
+    await fetch(CHATS_URL, {
       method: "POST", headers: apiHeaders(token),
-      body: JSON.stringify({ chat_id: chat.id, pin }),
+      body: JSON.stringify({ action: "pin-chat", chat_id: chat.id, pin }),
     });
     setContextChat(null);
   }
@@ -2860,9 +2860,9 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall, openChatId, onC
     const muted = true;
     const muted_until = minutes ? new Date(Date.now() + minutes * 60000).toISOString() : null;
     setChats(prev => prev.map(c => c.id === chat.id ? { ...c, muted, muted_until } : c));
-    await fetch(`${CHATS_URL}/mute-chat`, {
+    await fetch(CHATS_URL, {
       method: "POST", headers: apiHeaders(token),
-      body: JSON.stringify({ chat_id: chat.id, mute: true, minutes }),
+      body: JSON.stringify({ action: "mute-chat", chat_id: chat.id, mute: true, minutes }),
     });
     setMuteChat(null);
     setContextChat(null);
@@ -2872,9 +2872,9 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall, openChatId, onC
     setChats(prev => prev.map(c => c.id === chat.id ? { ...c, muted: false, muted_until: null } : c));
     setContextChat(null);
     setMuteChat(null);
-    await fetch(`${CHATS_URL}/mute-chat`, {
+    await fetch(CHATS_URL, {
       method: "POST", headers: apiHeaders(token),
-      body: JSON.stringify({ chat_id: chat.id, mute: false }),
+      body: JSON.stringify({ action: "mute-chat", chat_id: chat.id, mute: false }),
     });
   }
 
@@ -2884,11 +2884,11 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall, openChatId, onC
     if (activeChat?.id === chat.id) setActiveChat(null);
     setChats(prev => prev.filter(c => c.id !== chat.id));
     if (action === "leave") {
-      await fetch(`${CHATS_URL}/leave`, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ chat_id: chat.id }) });
+      await fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "leave", chat_id: chat.id }) });
     } else if (action === "delete") {
-      await fetch(`${CHATS_URL}/delete-chat`, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ chat_id: chat.id }) });
+      await fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "delete-chat", chat_id: chat.id }) });
     } else {
-      await fetch(`${CHATS_URL}/hide-chat`, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ chat_id: chat.id }) });
+      await fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "hide-chat", chat_id: chat.id }) });
     }
   }
 
@@ -2909,7 +2909,7 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall, openChatId, onC
     if (val.trim().length < 2) { setGlobalSearching(false); return; }
     setGlobalSearching(true);
     globalSearchTimer.current = setTimeout(async () => {
-      const res = await fetch(`${CHATS_URL}/global-search?q=${encodeURIComponent(val.trim())}`, { headers: apiHeaders(token) });
+      const res = await fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "global-search", q: val.trim() }) });
       const data = await res.json();
       setGlobalResults(data.results || []);
       setGlobalSearching(false);
@@ -3366,9 +3366,9 @@ function ProfileTab({ user, token, onLogout, onUserUpdate, onDeleteAccount }: {
       const reader = new FileReader();
       reader.onload = async (e) => {
         const dataUrl = e.target?.result as string;
-        const res = await fetch(`${AUTH_URL}/upload-avatar`, {
+        const res = await fetch(AUTH_URL, {
           method: "POST", headers: apiHeaders(token),
-          body: JSON.stringify({ image: dataUrl }),
+          body: JSON.stringify({ action: "upload-avatar", image: dataUrl }),
         });
         const data = await res.json();
         if (data.user) { onUserUpdate(data.user); setSaved(true); setTimeout(() => setSaved(false), 2000); }
@@ -3393,9 +3393,9 @@ function ProfileTab({ user, token, onLogout, onUserUpdate, onDeleteAccount }: {
     if (newPw !== confirmPw) { setPwError("Пароли не совпадают"); return; }
     setPwSaving(true);
     try {
-      const res = await fetch(`${AUTH_URL}/change-password`, {
+      const res = await fetch(AUTH_URL, {
         method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ current_password: curPw, new_password: newPw }),
+        body: JSON.stringify({ action: "change-password", current_password: curPw, new_password: newPw }),
       });
       const data = await res.json();
       if (!res.ok) { setPwError(data.error || "Ошибка"); return; }
@@ -3409,9 +3409,9 @@ function ProfileTab({ user, token, onLogout, onUserUpdate, onDeleteAccount }: {
     if (!name.trim()) { setError("Имя не может быть пустым"); return; }
     setSaving(true); setError("");
     try {
-      const res = await fetch(`${AUTH_URL}/update-profile`, {
+      const res = await fetch(AUTH_URL, {
         method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ name: name.trim(), bio: bio.trim() }),
+        body: JSON.stringify({ action: "update-profile", name: name.trim(), bio: bio.trim() }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error || "Ошибка сохранения"); return; }
@@ -3688,7 +3688,7 @@ function ProfileTab({ user, token, onLogout, onUserUpdate, onDeleteAccount }: {
           setShowBlacklist(v => !v);
           if (!showBlacklist) {
             setBlacklistLoading(true);
-            fetch(`${AUTH_URL}/blocked-list`, { headers: apiHeaders(token) })
+            fetch(AUTH_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "blocked-list" }) })
               .then(r => r.json())
               .then(d => { if (d.blocked) setBlockedUsers(d.blocked); })
               .catch(() => {})
@@ -3734,9 +3734,9 @@ function ProfileTab({ user, token, onLogout, onUserUpdate, onDeleteAccount }: {
                       onClick={async () => {
                         setUnblockingId(u.id);
                         try {
-                          const res = await fetch(`${AUTH_URL}/unblock`, {
+                          const res = await fetch(AUTH_URL, {
                             method: "POST", headers: apiHeaders(token),
-                            body: JSON.stringify({ user_id: u.id }),
+                            body: JSON.stringify({ action: "unblock", user_id: u.id }),
                           });
                           const data = await res.json();
                           if (data.ok) setBlockedUsers(prev => prev.filter(x => x.id !== u.id));
@@ -3784,7 +3784,7 @@ function ProfileTab({ user, token, onLogout, onUserUpdate, onDeleteAccount }: {
               <button disabled={deleting} onClick={async () => {
                 setDeleting(true);
                 try {
-                  await fetch(`${CHATS_URL}/delete-account`, { method: "POST", headers: apiHeaders(token) });
+                  await fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "delete-account" }) });
                   onDeleteAccount();
                 } catch { setDeleting(false); }
               }}
@@ -3830,9 +3830,9 @@ function CallScreen({ session, token, onEnd }: { session: CallSession; token: st
   ];
 
   async function sendSignal(type: string, payload: unknown) {
-    await fetch(`${CALLS_URL}/signal`, {
+    await fetch(CALLS_URL, {
       method: "POST", headers: apiHeaders(token),
-      body: JSON.stringify({ call_id: session.callId, type, payload }),
+      body: JSON.stringify({ action: "signal", call_id: session.callId, type, payload }),
     }).catch(() => {});
   }
 
@@ -3843,7 +3843,7 @@ function CallScreen({ session, token, onEnd }: { session: CallSession; token: st
     pcRef.current?.close();
     localStreamRef.current?.getTracks().forEach(t => t.stop());
     if (remoteAudioRef.current) { remoteAudioRef.current.srcObject = null; remoteAudioRef.current.remove(); remoteAudioRef.current = null; }
-    await fetch(`${CALLS_URL}/end`, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ call_id: session.callId }) }).catch(() => {});
+    await fetch(CALLS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "end", call_id: session.callId }) }).catch(() => {});
     onEnd();
   }
 
@@ -3928,7 +3928,7 @@ function CallScreen({ session, token, onEnd }: { session: CallSession; token: st
 
       pollRef.current = setInterval(async () => {
         if (endedRef.current) return;
-        const res = await fetch(`${CALLS_URL}/poll?call_id=${session.callId}&last_signal_id=${lastSignalIdRef.current}`, { headers: apiHeaders(token) }).catch(() => null);
+        const res = await fetch(CALLS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "poll", call_id: session.callId, last_signal_id: lastSignalIdRef.current }) }).catch(() => null);
         if (!res) return;
         const data = await res.json().catch(() => ({}));
 
@@ -4254,7 +4254,7 @@ function CallsTab({ token, onCall }: { token: string; onCall: (userId: number, u
   const [filter, setFilter] = useState<"all" | "incoming" | "outgoing" | "missed">("all");
 
   useEffect(() => {
-    fetch(`${CALLS_URL}/history`, { headers: apiHeaders(token) })
+    fetch(CALLS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "history" }) })
       .then(r => r.json())
       .then(d => { if (d.calls) setCalls(d.calls); })
       .finally(() => setLoading(false));
@@ -4423,7 +4423,7 @@ function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (us
   async function loadContacts() {
     setLoading(true);
     try {
-      const res = await fetch(`${AUTH_URL}/contacts`, { headers: apiHeaders(token) });
+      const res = await fetch(AUTH_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "contacts" }) });
       const data = await res.json();
       if (data.contacts) setContacts(data.contacts.filter((c: Contact) => c.name !== "[удалён]" && c.phone));
     } finally { setLoading(false); }
@@ -4447,9 +4447,9 @@ function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (us
         }
       }
       if (!entries.length) { setSyncing(false); return; }
-      const res = await fetch(`${AUTH_URL}/contacts/sync`, {
+      const res = await fetch(AUTH_URL, {
         method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ contacts: entries }),
+        body: JSON.stringify({ action: "contacts/sync", contacts: entries }),
       });
       const data = await res.json();
       setSyncDone(data.synced ?? 0);
@@ -4462,9 +4462,9 @@ function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (us
     if (!addName.trim() || !addPhone.trim()) { setAddError("Заполните имя и номер"); return; }
     setAddLoading(true); setAddError("");
     try {
-      const res = await fetch(`${AUTH_URL}/contacts/add`, {
+      const res = await fetch(AUTH_URL, {
         method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ name: addName.trim(), phone: addPhone.trim() }),
+        body: JSON.stringify({ action: "contacts/add", name: addName.trim(), phone: addPhone.trim() }),
       });
       const data = await res.json();
       if (!res.ok) { setAddError(data.error || "Ошибка"); return; }
@@ -4478,9 +4478,9 @@ function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (us
   }
 
   async function removeContact(id: number) {
-    await fetch(`${AUTH_URL}/contacts/remove`, {
+    await fetch(AUTH_URL, {
       method: "POST", headers: apiHeaders(token),
-      body: JSON.stringify({ contact_id: id }),
+      body: JSON.stringify({ action: "contacts/remove", contact_id: id }),
     });
     setContacts(prev => prev.filter(c => c.id !== id));
   }
@@ -4490,7 +4490,7 @@ function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (us
     if (!q.trim()) { setSearchUsers([]); return; }
     setSearchLoading(true);
     try {
-      const res = await fetch(`${CHATS_URL}/users?q=${encodeURIComponent(q)}`, { headers: apiHeaders(token) });
+      const res = await fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "users", q }) });
       const data = await res.json();
       if (data.users) setSearchUsers(data.users);
     } finally { setSearchLoading(false); }
@@ -5677,7 +5677,7 @@ export default function App() {
 
   useEffect(() => {
     if (!token) { setAuthChecked(true); return; }
-    fetch(`${AUTH_URL}/me`, { headers: apiHeaders(token) })
+    fetch(AUTH_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "me" }) })
       .then(r => r.json())
       .then(data => {
         if (data.user) {
@@ -5704,7 +5704,7 @@ export default function App() {
         if (perm !== "granted") return;
 
         const reg = await navigator.serviceWorker.ready;
-        const keyRes = await fetch(`${CHATS_URL}/vapid-public-key`, { headers: apiHeaders(token) });
+        const keyRes = await fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "vapid-public-key" }) });
         const keyData = await keyRes.json();
         if (!keyData.public_key) return;
 
@@ -5714,10 +5714,10 @@ export default function App() {
           applicationServerKey: keyData.public_key,
         });
 
-        await fetch(`${CHATS_URL}/subscribe`, {
+        await fetch(CHATS_URL, {
           method: "POST",
           headers: apiHeaders(token),
-          body: JSON.stringify(sub.toJSON()),
+          body: JSON.stringify({ action: "subscribe", ...sub.toJSON() }),
         });
       } catch { /* push not supported or blocked */ }
     }
@@ -5767,7 +5767,7 @@ export default function App() {
 
   const refreshBadge = useCallback(() => {
     if (!token) return;
-    fetch(`${CHATS_URL}/chats`, { headers: apiHeaders(token) })
+    fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "chats" }) })
       .then(r => r.json())
       .then(d => {
         if (!d.chats) return;
@@ -5805,7 +5805,7 @@ export default function App() {
   }
 
   async function handleLogout() {
-    if (token) fetch(`${AUTH_URL}/logout`, { method: "POST", headers: apiHeaders(token) }).catch(() => {});
+    if (token) fetch(AUTH_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "logout" }) }).catch(() => {});
     setToken(null); setUser(null);
     localStorage.removeItem("pulse_token"); localStorage.removeItem("pulse_user");
     setTab("chats");
@@ -5813,9 +5813,9 @@ export default function App() {
 
   async function openChatWith(userId: number) {
     if (!token) return;
-    const res = await fetch(`${CHATS_URL}/create`, {
+    const res = await fetch(CHATS_URL, {
       method: "POST", headers: apiHeaders(token),
-      body: JSON.stringify({ is_group: false, members: [userId] }),
+      body: JSON.stringify({ action: "create", is_group: false, members: [userId] }),
     }).catch(() => null);
     const data = await res?.json().catch(() => null);
     if (data?.chat_id) {
@@ -5828,9 +5828,9 @@ export default function App() {
 
   async function startCall(calleeId: number, calleeName: string, isVideo = false) {
     if (!token) return;
-    const res = await fetch(`${CALLS_URL}/initiate`, {
+    const res = await fetch(CALLS_URL, {
       method: "POST", headers: apiHeaders(token),
-      body: JSON.stringify({ callee_id: calleeId, is_video: isVideo }),
+      body: JSON.stringify({ action: "initiate", callee_id: calleeId, is_video: isVideo }),
     });
     const data = await res.json();
     if (data.call_id) {
@@ -5841,14 +5841,14 @@ export default function App() {
 
   async function acceptCall(session: CallSession) {
     if (!token) return;
-    await fetch(`${CALLS_URL}/answer`, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ call_id: session.callId }) });
+    await fetch(CALLS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "answer", call_id: session.callId }) });
     setActiveCall({ ...session, status: "ringing" });
     setIncomingCall(null);
   }
 
   async function declineCall(session: CallSession) {
     if (!token) return;
-    await fetch(`${CALLS_URL}/decline`, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ call_id: session.callId }) });
+    await fetch(CALLS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "decline", call_id: session.callId }) });
     setIncomingCall(null);
   }
 
@@ -5856,7 +5856,7 @@ export default function App() {
     if (!token || !user) return;
     const poll = setInterval(async () => {
       if (activeCall) return;
-      const res = await fetch(`${CALLS_URL}/incoming`, { headers: apiHeaders(token) }).catch(() => null);
+      const res = await fetch(CALLS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "incoming" }) }).catch(() => null);
       if (!res) return;
       const data = await res.json();
       if (data.call) {

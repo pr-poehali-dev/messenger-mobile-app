@@ -6,6 +6,15 @@
       "path": "/",
       "expectedStatus": 200,
       "bodyMatcher": "partial"
+    },
+    {
+      "name": "POST send-code missing contact",
+      "method": "POST",
+      "path": "/",
+      "body": {"action": "send-code", "purpose": "register"},
+      "expectedStatus": 400,
+      "expectedBody": {"error": "Укажите email или телефон"},
+      "bodyMatcher": "partial"
     }
   ]
 }

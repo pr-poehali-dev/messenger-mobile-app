@@ -44,6 +44,13 @@ def handler(event: dict, context) -> dict:
     path = event.get("path", "/").rstrip("/") or "/"
     method = event.get("httpMethod", "GET")
 
+    body_raw = event.get("body") or "{}"
+    try:
+        body_pre = json.loads(body_raw)
+    except:
+        body_pre = {}
+    action = body_pre.get("action", "") or path.strip("/").split("/")[-1]
+
     conn = get_conn()
     user = auth_user(conn, token)
     if not user:
@@ -54,8 +61,8 @@ def handler(event: dict, context) -> dict:
 
     try:
         # POST /initiate — начать звонок (аудио или видео)
-        if path.endswith("/initiate") and method == "POST":
-            body = json.loads(event.get("body") or "{}")
+        if action == "initiate":
+            body = body_pre
             callee_id = safe_int(body.get("callee_id"))
             is_video = bool(body.get("is_video", False))
             if not callee_id:
@@ -90,8 +97,8 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"call_id": call_id})}
 
         # POST /answer — ответить на звонок
-        if path.endswith("/answer") and method == "POST":
-            body = json.loads(event.get("body") or "{}")
+        if action == "answer":
+            body = body_pre
             call_id = body.get("call_id")
             with conn.cursor() as cur:
                 cur.execute(f"""
@@ -102,8 +109,8 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
 
         # POST /decline — отклонить звонок
-        if path.endswith("/decline") and method == "POST":
-            body = json.loads(event.get("body") or "{}")
+        if action == "decline":
+            body = body_pre
             call_id = body.get("call_id")
             with conn.cursor() as cur:
                 cur.execute(f"""
@@ -114,8 +121,8 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
 
         # POST /end — завершить звонок
-        if path.endswith("/end") and method == "POST":
-            body = json.loads(event.get("body") or "{}")
+        if action == "end":
+            body = body_pre
             call_id = body.get("call_id")
             with conn.cursor() as cur:
                 cur.execute(f"""
@@ -126,8 +133,8 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
 
         # POST /signal — отправить WebRTC сигнал (offer/answer/ice-candidate)
-        if path.endswith("/signal") and method == "POST":
-            body = json.loads(event.get("body") or "{}")
+        if action == "signal":
+            body = body_pre
             call_id = safe_int(body.get("call_id"))
             signal_type = body.get("type", "")
             payload = body.get("payload")
@@ -153,11 +160,11 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"signal_id": sig_id})}
 
-        # GET /poll?call_id=X&last_signal_id=Y — получить новые сигналы и статус
-        if path.endswith("/poll") and method == "GET":
+        # poll — получить новые сигналы и статус
+        if action == "poll":
             params = event.get("queryStringParameters") or {}
-            call_id = safe_int(params.get("call_id"))
-            last_signal_id = safe_int(params.get("last_signal_id"))
+            call_id = safe_int(body_pre.get("call_id") or params.get("call_id"))
+            last_signal_id = safe_int(body_pre.get("last_signal_id") or params.get("last_signal_id"))
             if not call_id:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "call_id required"})}
 
@@ -190,8 +197,8 @@ def handler(event: dict, context) -> dict:
 
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"call": call_info, "signals": signals})}
 
-        # GET /incoming — проверить входящие звонки
-        if path.endswith("/incoming") and method == "GET":
+        # incoming — проверить входящие звонки
+        if action == "incoming":
             with conn.cursor() as cur:
                 cur.execute(f"""
                     SELECT c.id, c.caller_id, u.name, u.avatar_url, c.is_video, c.created_at
@@ -214,8 +221,8 @@ def handler(event: dict, context) -> dict:
                     })}
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"call": None})}
 
-        # GET /history — история звонков
-        if path.endswith("/history") and method == "GET":
+        # history — история звонков
+        if action == "history":
             with conn.cursor() as cur:
                 cur.execute(f"""
                     SELECT c.id, c.caller_id, c.callee_id, c.status, c.is_video,
