@@ -25,7 +25,22 @@ def get_conn():
     return psycopg2.connect(os.environ["DATABASE_URL"])
 
 def hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
+    # PBKDF2-HMAC-SHA256 с фиксированной солью из SECRET_KEY (безопаснее чем голый SHA256)
+    secret = os.environ.get("SECRET_KEY", "kasper-default-secret-change-me")
+    return hashlib.pbkdf2_hmac("sha256", password.encode(), secret.encode(), 100_000).hex()
+
+def safe_int(val, default=0) -> int:
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return default
+
+def validate_str(val: str, max_len: int, field: str = "поле"):
+    if not val or not val.strip():
+        raise ValueError(f"{field} не может быть пустым")
+    if len(val) > max_len:
+        raise ValueError(f"{field} слишком длинное (макс. {max_len} символов)")
+    return val.strip()
 
 def get_s3():
     return boto3.client(
@@ -146,15 +161,26 @@ def handler(event: dict, context) -> dict:
         # POST /send-code — отправить OTP на email или телефон
         if method == "POST" and path.endswith("/send-code"):
             body = json.loads(event.get("body") or "{}")
-            contact = body.get("contact", "").strip()
+            contact = body.get("contact", "").strip()[:200]
             purpose = body.get("purpose", "register")
 
             if not contact:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Укажите email или телефон"})}
+            if purpose not in ("register", "login"):
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Некорректный параметр purpose"})}
 
             contact_type = "email" if is_email(contact) else "phone"
             if contact_type == "phone":
                 contact = normalize_phone(contact)
+
+            # ── Rate limit: не более 3 OTP за 10 минут на один контакт ──
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT COUNT(*) FROM {SCHEMA}.verification_codes
+                    WHERE contact = %s AND created_at > NOW() - INTERVAL '10 minutes'
+                """, (contact,))
+                if cur.fetchone()[0] >= 3:
+                    return {"statusCode": 429, "headers": cors, "body": json.dumps({"error": "Слишком много попыток. Подождите 10 минут"})}
 
             # Проверяем существование при регистрации
             if purpose == "register":
@@ -365,8 +391,8 @@ def handler(event: dict, context) -> dict:
             if not user:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Сессия истекла"})}
             body = json.loads(event.get("body") or "{}")
-            new_name = body.get("name", "").strip()
-            new_bio = body.get("bio", "").strip()
+            new_name = body.get("name", "").strip()[:100]
+            new_bio = body.get("bio", "").strip()[:500]
             if not new_name:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Имя не может быть пустым"})}
             with conn.cursor() as cur:
@@ -606,19 +632,19 @@ def handler(event: dict, context) -> dict:
             if not user:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Сессия истекла"})}
             params = event.get("queryStringParameters") or {}
-            target_id = params.get("user_id")
+            target_id = safe_int(params.get("user_id"))
             if not target_id:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "user_id обязателен"})}
             with conn.cursor() as cur:
                 cur.execute(f"""
                     SELECT COUNT(*) FROM {SCHEMA}.blocked_users
                     WHERE blocker_id = %s AND blocked_id = %s AND is_active = TRUE
-                """, (user["id"], int(target_id)))
+                """, (user["id"], target_id))
                 i_blocked = cur.fetchone()[0] > 0
                 cur.execute(f"""
                     SELECT COUNT(*) FROM {SCHEMA}.blocked_users
                     WHERE blocker_id = %s AND blocked_id = %s AND is_active = TRUE
-                """, (int(target_id), user["id"]))
+                """, (target_id, user["id"]))
                 blocked_me = cur.fetchone()[0] > 0
             return {"statusCode": 200, "headers": cors, "body": json.dumps({
                 "i_blocked": i_blocked,

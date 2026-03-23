@@ -9,7 +9,7 @@ def get_conn():
     return psycopg2.connect(os.environ["DATABASE_URL"])
 
 def auth_user(conn, token: str):
-    if not token:
+    if not token or len(token) > 128:
         return None
     with conn.cursor() as cur:
         cur.execute(f"""
@@ -22,6 +22,12 @@ def auth_user(conn, token: str):
         if row:
             return {"id": row[0], "name": row[1], "avatar_url": row[2]}
     return None
+
+def safe_int(val, default=0) -> int:
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return default
 
 def handler(event: dict, context) -> dict:
     """Сервис звонков: аудио и видео через WebRTC"""
@@ -50,10 +56,25 @@ def handler(event: dict, context) -> dict:
         # POST /initiate — начать звонок (аудио или видео)
         if path.endswith("/initiate") and method == "POST":
             body = json.loads(event.get("body") or "{}")
-            callee_id = body.get("callee_id")
+            callee_id = safe_int(body.get("callee_id"))
             is_video = bool(body.get("is_video", False))
             if not callee_id:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "callee_id required"})}
+            if callee_id == uid:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Нельзя позвонить самому себе"})}
+            # Проверяем существование callee
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT id FROM {SCHEMA}.users WHERE id = %s", (callee_id,))
+                if not cur.fetchone():
+                    return {"statusCode": 404, "headers": cors, "body": json.dumps({"error": "Пользователь не найден"})}
+            # Rate limit: не более 10 звонков в час
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT COUNT(*) FROM {SCHEMA}.calls
+                    WHERE caller_id = %s AND created_at > NOW() - INTERVAL '1 hour'
+                """, (uid,))
+                if cur.fetchone()[0] >= 10:
+                    return {"statusCode": 429, "headers": cors, "body": json.dumps({"error": "Слишком много звонков. Попробуйте позже"})}
 
             with conn.cursor() as cur:
                 cur.execute(f"""
@@ -107,11 +128,21 @@ def handler(event: dict, context) -> dict:
         # POST /signal — отправить WebRTC сигнал (offer/answer/ice-candidate)
         if path.endswith("/signal") and method == "POST":
             body = json.loads(event.get("body") or "{}")
-            call_id = body.get("call_id")
-            signal_type = body.get("type")
+            call_id = safe_int(body.get("call_id"))
+            signal_type = body.get("type", "")
             payload = body.get("payload")
-            if not all([call_id, signal_type, payload is not None]):
+            if not call_id or not signal_type or payload is None:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "call_id, type, payload required"})}
+            if signal_type not in ("offer", "answer", "ice-candidate"):
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Недопустимый тип сигнала"})}
+            # Проверяем что user — участник этого звонка
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT id FROM {SCHEMA}.calls
+                    WHERE id = %s AND (caller_id = %s OR callee_id = %s) AND status IN ('ringing','active')
+                """, (call_id, uid, uid))
+                if not cur.fetchone():
+                    return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Нет доступа к этому звонку"})}
 
             with conn.cursor() as cur:
                 cur.execute(f"""
@@ -125,8 +156,10 @@ def handler(event: dict, context) -> dict:
         # GET /poll?call_id=X&last_signal_id=Y — получить новые сигналы и статус
         if path.endswith("/poll") and method == "GET":
             params = event.get("queryStringParameters") or {}
-            call_id = int(params.get("call_id", 0))
-            last_signal_id = int(params.get("last_signal_id", 0))
+            call_id = safe_int(params.get("call_id"))
+            last_signal_id = safe_int(params.get("last_signal_id"))
+            if not call_id:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "call_id required"})}
 
             with conn.cursor() as cur:
                 cur.execute(f"""

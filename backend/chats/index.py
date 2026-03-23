@@ -271,19 +271,18 @@ def handler(event: dict, context) -> dict:
                     cur.execute(f"SELECT 1 FROM {SCHEMA}.messages WHERE chat_id = %s AND id < %s AND hidden_at IS NULL LIMIT 1", (chat_id, rows[0][0]))
                     has_more = cur.fetchone() is not None
 
-                # Load reactions for all messages
+                # Load reactions for all messages (безопасно: psycopg2 ANY с массивом)
                 msg_ids = [r[0] for r in rows]
                 reactions_map = {}
                 if msg_ids:
-                    in_clause = ",".join(str(i) for i in msg_ids)
                     cur.execute(f"""
                         SELECT message_id, emoji, COUNT(*) as cnt,
-                               BOOL_OR(user_id = {int(user_id)}) as i_reacted
+                               BOOL_OR(user_id = %s) as i_reacted
                         FROM {SCHEMA}.message_reactions
-                        WHERE message_id IN ({in_clause}) AND emoji != ''
+                        WHERE message_id = ANY(%s) AND emoji != ''
                         GROUP BY message_id, emoji
                         ORDER BY message_id, MIN(created_at)
-                    """)
+                    """, (user_id, msg_ids))
                     for rr in cur.fetchall():
                         mid = rr[0]
                         if mid not in reactions_map:
@@ -350,6 +349,19 @@ def handler(event: dict, context) -> dict:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id и text или file_url обязательны"})}
             if len(text) > 4000:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Сообщение слишком длинное"})}
+            # Валидируем chat_id
+            try: chat_id = int(chat_id)
+            except (TypeError, ValueError):
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Некорректный chat_id"})}
+
+            # ── Rate limit: не более 60 сообщений в минуту ──
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT COUNT(*) FROM {SCHEMA}.messages
+                    WHERE sender_id = %s AND created_at > NOW() - INTERVAL '1 minute'
+                """, (user_id,))
+                if cur.fetchone()[0] >= 60:
+                    return {"statusCode": 429, "headers": cors, "body": json.dumps({"error": "Слишком много сообщений. Подождите немного"})}
 
             try:
                 with conn.cursor() as cur:
@@ -567,58 +579,77 @@ def handler(event: dict, context) -> dict:
                     """, (message_id, emoji if emoji else emoji, emoji))
                     toggled = "added"
 
-                # Get fresh reaction counts (exclude empty/removed)
+                # Get fresh reaction counts (exclude empty/removed) — параметризованный запрос
                 cur.execute(f"""
                     SELECT emoji, COUNT(*) as cnt,
-                           BOOL_OR(user_id = {int(user_id)}) as i_reacted
+                           BOOL_OR(user_id = %s) as i_reacted
                     FROM {SCHEMA}.message_reactions
                     WHERE message_id = %s AND emoji != ''
                     GROUP BY emoji
                     ORDER BY MIN(created_at)
-                """, (message_id,))
+                """, (user_id, message_id,))
                 reactions = [{"emoji": rr[0], "count": int(rr[1]), "i_reacted": rr[2]} for rr in cur.fetchall()]
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"reactions": reactions, "toggled": toggled})}
 
         # POST /upload — загрузить файл в S3
         if method == "POST" and "upload" in path:
+            # ── Rate limit: не более 20 загрузок в час ──
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT COUNT(*) FROM {SCHEMA}.messages
+                    WHERE sender_id = %s AND file_url IS NOT NULL
+                      AND created_at > NOW() - INTERVAL '1 hour'
+                """, (user_id,))
+                if cur.fetchone()[0] >= 20:
+                    return {"statusCode": 429, "headers": cors, "body": json.dumps({"error": "Слишком много загрузок. Попробуйте позже"})}
+
             body = json.loads(event.get("body") or "{}")
-            # Поддерживаем оба ключа: "file" и "file_data" (для голосовых)
             file_b64 = body.get("file") or body.get("file_data")
-            file_name = (body.get("file_name") or "file").strip()
-            file_type = body.get("file_type") or "application/octet-stream"
+            file_name = (body.get("file_name") or "file").strip()[:255]
+            file_type = (body.get("file_type") or "application/octet-stream").strip()[:100]
 
             if not file_b64:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "file required"})}
 
-            file_data = base64.b64decode(file_b64)
-            file_size = len(file_data)
-
-            # Лимит 25 МБ
-            if file_size > 25 * 1024 * 1024:
-                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Файл слишком большой (макс. 25 МБ)"})}
-
-            # Безопасное имя файла
-            import re as _re
-            safe_name = _re.sub(r'[^\w.\-]', '_', file_name)[:200] or "file"
-
-            # Правильное расширение по MIME
-            MIME_EXT = {
+            # ── Строгий whitelist MIME-типов ──
+            ALLOWED_MIME = {
                 "image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif",
                 "image/webp": ".webp", "image/heic": ".heic",
                 "video/mp4": ".mp4", "video/webm": ".webm", "video/quicktime": ".mov",
                 "audio/webm": ".webm", "audio/ogg": ".ogg", "audio/mpeg": ".mp3",
                 "audio/mp4": ".m4a", "audio/wav": ".wav",
                 "application/pdf": ".pdf",
+                "application/zip": ".zip",
+                "application/msword": ".doc",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+                "application/vnd.ms-excel": ".xls",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+                "text/plain": ".txt",
             }
-            ext = MIME_EXT.get(file_type) or mimetypes.guess_extension(file_type) or ""
-            # Если в имени уже есть расширение — не дублируем
-            if not safe_name.lower().endswith(ext.lower()):
-                key_name = f"{uuid.uuid4().hex}{ext}"
-            else:
-                key_name = f"{uuid.uuid4().hex}_{safe_name}"
+            if file_type not in ALLOWED_MIME:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Тип файла не разрешён"})}
 
+            # ── Безопасный decode base64 ──
+            try:
+                file_data = base64.b64decode(file_b64, validate=True)
+            except Exception:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Некорректный файл"})}
+
+            file_size = len(file_data)
+            if file_size == 0:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Файл пуст"})}
+            if file_size > 25 * 1024 * 1024:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Файл слишком большой (макс. 25 МБ)"})}
+
+            # ── Безопасное имя: только uuid, расширение из whitelist ──
+            ext = ALLOWED_MIME[file_type]
+            key_name = f"{uuid.uuid4().hex}{ext}"
             key = f"chat-files/{key_name}"
+
+            # Для отображения пользователю — очищаем оригинальное имя
+            import re as _re
+            safe_display = _re.sub(r'[^\w.\-\s]', '_', file_name)[:100] or "file"
 
             s3 = boto3.client(
                 "s3",
@@ -629,7 +660,6 @@ def handler(event: dict, context) -> dict:
             s3.put_object(
                 Bucket="files", Key=key, Body=file_data,
                 ContentType=file_type,
-                Metadata={"original-name": safe_name},
             )
             cdn_url = f"https://cdn.poehali.dev/projects/{os.environ['AWS_ACCESS_KEY_ID']}/bucket/{key}"
 
@@ -637,7 +667,7 @@ def handler(event: dict, context) -> dict:
                 "statusCode": 200, "headers": cors,
                 "body": json.dumps({
                     "file_url": cdn_url, "url": cdn_url,
-                    "file_name": safe_name,
+                    "file_name": safe_display,
                     "file_size": file_size,
                     "file_type": file_type,
                 })
