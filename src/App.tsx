@@ -444,6 +444,98 @@ function BottomNav({ active, onChange, unreadCount }: {
   );
 }
 
+// ─── Voice Player ─────────────────────────────────────────────────────────────
+
+function VoicePlayer({ src, isOut, isRead, msgId, token, onRead }: {
+  src: string; isOut: boolean; isRead: boolean; msgId: number | string;
+  token: string; onRead?: () => void;
+}) {
+  const [playing, setPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [currentTime, setCurrent] = useState(0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    const a = new Audio(src);
+    a.preload = "metadata";
+    a.onloadedmetadata = () => { setDuration(isFinite(a.duration) ? a.duration : 0); };
+    a.ontimeupdate = () => {
+      setCurrent(a.currentTime);
+      setProgress(a.duration ? a.currentTime / a.duration : 0);
+    };
+    a.onended = () => { setPlaying(false); setProgress(0); setCurrent(0); };
+    audioRef.current = a;
+    return () => { a.pause(); a.src = ""; };
+  }, [src]);
+
+  function toggle() {
+    const a = audioRef.current;
+    if (!a) return;
+    if (playing) { a.pause(); setPlaying(false); }
+    else {
+      a.play().then(() => { setPlaying(true); }).catch(() => {});
+      if (!isOut && !isRead && typeof msgId === "number") {
+        fetch(`${CHATS_URL}/read`, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ message_id: msgId }) })
+          .then(() => onRead?.()).catch(() => {});
+      }
+    }
+  }
+
+  function seek(e: React.MouseEvent<HTMLDivElement>) {
+    const a = audioRef.current;
+    if (!a || !a.duration) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ratio = (e.clientX - rect.left) / rect.width;
+    a.currentTime = ratio * a.duration;
+  }
+
+  const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+  const accent = isOut ? "bg-white/70" : (isRead ? "bg-sky-400" : "bg-amber-400");
+  const trackBg = isOut ? "bg-white/20" : "bg-white/10";
+
+  // Псевдо-волна из seed по url
+  const bars = Array.from({ length: 28 }, (_, i) => {
+    const seed = (src.charCodeAt(i % src.length) + i * 7) % 24;
+    return 4 + seed;
+  });
+
+  return (
+    <div className="flex items-center gap-2.5 min-w-[200px] max-w-[260px]">
+      {/* Play/Pause */}
+      <button onClick={toggle}
+        className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-all active:scale-95
+          ${isOut ? "bg-white/20 hover:bg-white/30" : "bg-sky-500/20 hover:bg-sky-500/30"}`}>
+        <Icon name={playing ? "Pause" : "Play"} size={16}
+          className={isOut ? "text-white" : (isRead ? "text-sky-400" : "text-amber-400")} />
+      </button>
+
+      {/* Волна + прогресс */}
+      <div className="flex-1 flex flex-col gap-1">
+        <div className={`relative flex items-end gap-[2px] h-6 cursor-pointer rounded-sm overflow-hidden ${trackBg}`}
+          onClick={seek}>
+          {bars.map((h, i) => {
+            const barProgress = (i + 1) / bars.length;
+            const filled = barProgress <= progress;
+            return (
+              <div key={i} className={`flex-1 rounded-full transition-colors duration-75 ${filled ? accent : (isOut ? "bg-white/25" : "bg-white/15")}`}
+                style={{ height: `${h}px`, minHeight: "3px" }} />
+            );
+          })}
+        </div>
+        <div className="flex justify-between">
+          <span className={`text-[10px] tabular-nums ${isOut ? "text-white/60" : "text-muted-foreground"}`}>
+            {playing ? fmt(currentTime) : (duration > 0 ? fmt(duration) : "--:--")}
+          </span>
+          {!isOut && !isRead && (
+            <span className="text-[10px] text-amber-400/80">●</span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Chat Screen ──────────────────────────────────────────────────────────────
 
 function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRead, initialMsgId, onCall, onChatUpdate }: {
@@ -502,9 +594,14 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
   // Voice recording
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
+  const [voicePreview, setVoicePreview] = useState<{ blob: Blob; url: string; duration: number } | null>(null);
+  const [waveformBars, setWaveformBars] = useState<number[]>(Array(28).fill(3));
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const waveAnimRef = useRef<number | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
 
   const isAtBottom = useRef(true);
   const [hasMore, setHasMore] = useState(false);
@@ -1099,9 +1196,13 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
   }
 
   async function startRecording() {
+    if (isRecording) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mr = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm" });
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "";
+      const mr = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       audioChunksRef.current = [];
       mr.ondataavailable = e => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
       mr.start(100);
@@ -1109,62 +1210,101 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
       setIsRecording(true);
       setRecordingTime(0);
       recordingTimerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000);
-    } catch { /* микрофон недоступен */ }
+
+      // Визуализация волны через AnalyserNode
+      try {
+        const AudioCtx = window.AudioContext || (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (AudioCtx) {
+          const ctx = new AudioCtx();
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 64;
+          ctx.createMediaStreamSource(stream).connect(analyser);
+          analyserRef.current = analyser;
+          audioCtxRef.current = ctx;
+          const data = new Uint8Array(analyser.frequencyBinCount);
+          const draw = () => {
+            analyser.getByteFrequencyData(data);
+            const bars = Array.from({ length: 28 }, (_, i) => {
+              const idx = Math.floor(i * data.length / 28);
+              return Math.max(3, Math.round((data[idx] / 255) * 32));
+            });
+            setWaveformBars(bars);
+            waveAnimRef.current = requestAnimationFrame(draw);
+          };
+          draw();
+        }
+      } catch { /* без визуализации */ }
+    } catch { /* нет доступа к микрофону */ }
   }
 
   function cancelRecording() {
+    if (waveAnimRef.current) { cancelAnimationFrame(waveAnimRef.current); waveAnimRef.current = null; }
+    analyserRef.current = null;
+    audioCtxRef.current?.close().catch(() => {}); audioCtxRef.current = null;
     if (mediaRecorderRef.current) {
       mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop());
-      mediaRecorderRef.current.stop();
+      try { mediaRecorderRef.current.stop(); } catch { /* уже остановлен */ }
       mediaRecorderRef.current = null;
     }
     if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
     audioChunksRef.current = [];
     setIsRecording(false);
     setRecordingTime(0);
+    setWaveformBars(Array(28).fill(3));
+    setVoicePreview(null);
   }
 
-  async function stopAndSendRecording() {
+  async function stopRecording() {
     const mr = mediaRecorderRef.current;
     if (!mr) return;
     setIsRecording(false);
     if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+    if (waveAnimRef.current) { cancelAnimationFrame(waveAnimRef.current); waveAnimRef.current = null; }
+    analyserRef.current = null;
+    audioCtxRef.current?.close().catch(() => {}); audioCtxRef.current = null;
 
-    await new Promise<void>(resolve => {
-      mr.onstop = () => resolve();
-      mr.stop();
-    });
+    const duration = recordingTime;
+    await new Promise<void>(resolve => { mr.onstop = () => resolve(); mr.stop(); });
     mr.stream.getTracks().forEach(t => t.stop());
     mediaRecorderRef.current = null;
 
     const blob = new Blob(audioChunksRef.current, { type: mr.mimeType || "audio/webm" });
     audioChunksRef.current = [];
     setRecordingTime(0);
-    if (blob.size < 1000) return;
+    setWaveformBars(Array(28).fill(3));
+    if (blob.size < 500) return;
 
+    const url = URL.createObjectURL(blob);
+    setVoicePreview({ blob, url, duration });
+  }
+
+  async function sendVoiceBlob(blob: Blob, duration: number) {
+    if (voicePreview) { URL.revokeObjectURL(voicePreview.url); setVoicePreview(null); }
     setUploading(true);
     try {
       const reader = new FileReader();
       reader.readAsDataURL(blob);
       const dataUrl = await new Promise<string>(res => { reader.onload = () => res(reader.result as string); });
       const base64 = dataUrl.split(",")[1];
-      const ext = mr.mimeType?.includes("ogg") ? "ogg" : "webm";
+      const mimeType = blob.type || "audio/webm";
+      const ext = mimeType.includes("ogg") ? "ogg" : mimeType.includes("mp4") ? "mp4" : "webm";
       const res = await fetch(`${CHATS_URL}/upload`, {
         method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ file_data: base64, file_name: `voice_${Date.now()}.${ext}`, file_type: `audio/${ext}` }),
+        body: JSON.stringify({ file_data: base64, file_name: `voice_${Date.now()}.${ext}`, file_type: mimeType }),
       });
       const data = await res.json();
       if (data.url) {
+        const fmtDur = `${Math.floor(duration / 60)}:${String(duration % 60).padStart(2, "0")}`;
         const optimistic: Message = {
           id: `opt-${Date.now()}`, text: "",
           time: new Date().toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" }),
           out: true, is_read: false,
-          file_url: data.url, file_name: `Голосовое`, file_size: blob.size, file_type: `audio/${ext}`,
+          file_url: data.url, file_name: `Голосовое · ${fmtDur}`, file_size: blob.size, file_type: mimeType,
         };
         setMessages(prev => [...prev, optimistic]);
         const sendRes = await fetch(`${CHATS_URL}/send`, {
           method: "POST", headers: apiHeaders(token),
-          body: JSON.stringify({ chat_id: chat.id, text: "", file_url: data.url, file_name: "Голосовое", file_size: blob.size, file_type: `audio/${ext}` }),
+          body: JSON.stringify({ chat_id: chat.id, text: "", file_url: data.url, file_name: optimistic.file_name, file_size: blob.size, file_type: mimeType }),
         });
         const sendData = await sendRes.json();
         if (sendData.message) {
@@ -1673,27 +1813,18 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
                 )}
                 {/* Аудио / голосовые */}
                 {msg.file_url && msg.file_type?.startsWith("audio/") && (
-                  <div className="flex items-center gap-2.5 mb-1.5 px-3 py-2.5 rounded-xl bg-black/20 border border-white/10 max-w-[260px] min-w-[200px]">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-colors ${msg.is_read || msg.out ? "bg-sky-500/20" : "bg-amber-500/20"}`}>
-                      <Icon name="Mic" size={14} className={msg.is_read || msg.out ? "text-sky-400" : "text-amber-400"} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <audio src={msg.file_url} controls preload="metadata"
-                        className="w-full h-8 rounded-lg"
-                        style={{ filter: "invert(0.8) sepia(1) saturate(2) hue-rotate(185deg)" }}
-                        onPlay={() => {
-                          if (!msg.out && !msg.is_read && typeof msg.id === "number") {
-                            fetch(`${CHATS_URL}/read`, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ message_id: msg.id }) })
-                              .then(() => { setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, is_read: true } : m)); onMessageRead?.(); });
-                          }
-                        }} />
-                    </div>
-                    <div className="flex flex-col items-center gap-1 flex-shrink-0">
-                      {msg.file_size && <span className="text-[10px] text-white/40">{(msg.file_size / 1024).toFixed(0)}кб</span>}
-                      <a href={msg.file_url} download={msg.file_name || "voice"} className="p-1 hover:bg-white/10 rounded-full transition-colors">
-                        <Icon name="Download" size={12} className="text-white/50" />
-                      </a>
-                    </div>
+                  <div className="mb-1.5 px-3 py-2.5 rounded-xl bg-black/20 border border-white/10">
+                    <VoicePlayer
+                      src={msg.file_url}
+                      isOut={msg.out}
+                      isRead={msg.is_read}
+                      msgId={msg.id}
+                      token={token}
+                      onRead={() => {
+                        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, is_read: true } : m));
+                        onMessageRead?.();
+                      }}
+                    />
                   </div>
                 )}
                 {/* Документы и прочие файлы */}
@@ -1921,15 +2052,25 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
           </div>
         )}
 
-        {/* Recording indicator */}
-        {isRecording && (
-          <div className="flex items-center gap-3 px-4 py-2 mb-2 rounded-2xl bg-red-500/10 border border-red-500/20">
-            <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
-            <span className="text-sm text-red-400 font-medium flex-1">Запись...
-              {" "}{String(Math.floor(recordingTime / 60)).padStart(2, "0")}:{String(recordingTime % 60).padStart(2, "0")}
+        {/* Предпросмотр голосового перед отправкой */}
+        {voicePreview && (
+          <div className="flex items-center gap-2 px-3 py-2 mb-2 rounded-2xl bg-secondary/80 border border-white/10 animate-fade-in">
+            <button onClick={() => { URL.revokeObjectURL(voicePreview.url); setVoicePreview(null); }}
+              className="p-1.5 rounded-full hover:bg-red-500/20 transition-colors flex-shrink-0">
+              <Icon name="Trash2" size={14} className="text-red-400" />
+            </button>
+            <audio src={voicePreview.url} controls preload="auto"
+              className="flex-1 h-8"
+              style={{ filter: "invert(0.8) sepia(1) saturate(2) hue-rotate(185deg)" }} />
+            <span className="text-[11px] text-muted-foreground flex-shrink-0">
+              {Math.floor(voicePreview.duration / 60)}:{String(voicePreview.duration % 60).padStart(2, "0")}
             </span>
-            <button onClick={cancelRecording} className="p-1 hover:bg-red-500/20 rounded-full transition-colors">
-              <Icon name="X" size={15} className="text-red-400" />
+            <button onClick={() => sendVoiceBlob(voicePreview.blob, voicePreview.duration)}
+              disabled={uploading}
+              className="p-2.5 rounded-full bg-gradient-to-br from-blue-600 to-blue-700 hover:scale-105 shadow-[0_0_16px_rgba(0,180,230,0.4)] transition-all flex-shrink-0 disabled:opacity-50">
+              {uploading
+                ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                : <Icon name="Send" size={14} className="text-white" />}
             </button>
           </div>
         )}
@@ -1939,43 +2080,63 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
               <Icon name="Radio" size={14} className="text-purple-400" />
               <span className="text-sm">Только администраторы могут писать в канале</span>
             </div>
-          : <div className="flex items-end gap-2">
-              <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileSelect}
-                accept="image/*,video/*,audio/*,application/pdf,.doc,.docx,.xls,.xlsx,.zip,.txt,.mp4,.mp3,.mov,.webm" />
-              {!isRecording && (
+          : isRecording
+            ? /* ── Панель записи ── */
+              <div className="flex items-center gap-3 px-3 py-2 animate-fade-in">
+                {/* Отмена */}
+                <button onClick={cancelRecording}
+                  className="p-2 rounded-full hover:bg-red-500/20 transition-colors flex-shrink-0">
+                  <Icon name="X" size={18} className="text-red-400" />
+                </button>
+
+                {/* Волна + таймер */}
+                <div className="flex-1 flex items-center gap-2 bg-red-500/8 border border-red-500/20 rounded-2xl px-3 py-1.5">
+                  <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
+                  <div className="flex items-end gap-[2px] flex-1 h-6 overflow-hidden">
+                    {waveformBars.map((h, i) => (
+                      <div key={i}
+                        className="flex-1 rounded-full bg-red-400/70 transition-all duration-100"
+                        style={{ height: `${h}px`, minHeight: "3px" }} />
+                    ))}
+                  </div>
+                  <span className="text-xs text-red-400 font-mono flex-shrink-0 tabular-nums">
+                    {String(Math.floor(recordingTime / 60)).padStart(2, "0")}:{String(recordingTime % 60).padStart(2, "0")}
+                  </span>
+                </div>
+
+                {/* Остановить и перейти к предпросмотру */}
+                <button onClick={stopRecording}
+                  className="p-3 rounded-full bg-gradient-to-br from-red-500 to-red-600 hover:scale-105 shadow-[0_0_20px_rgba(239,68,68,0.5)] transition-all flex-shrink-0">
+                  <Icon name="Square" size={16} className="text-white" />
+                </button>
+              </div>
+
+            : /* ── Обычная панель ввода ── */
+              <div className="flex items-end gap-2">
+                <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileSelect}
+                  accept="image/*,video/*,audio/*,application/pdf,.doc,.docx,.xls,.xlsx,.zip,.txt,.mp4,.mp3,.mov,.webm" />
                 <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
                   className={`p-2 rounded-full transition-all flex-shrink-0 ${uploading ? "opacity-50" : "hover:bg-white/10"}`}>
                   {uploading
                     ? <div className="w-5 h-5 border-2 border-blue-400/30 border-t-blue-400 rounded-full animate-spin" />
                     : <Icon name="Paperclip" size={20} className="text-muted-foreground" />}
                 </button>
-              )}
-              {isRecording
-                ? <div className="flex-1 flex items-center justify-center py-2.5 text-sm text-muted-foreground">
-                    Проведи влево, чтобы отменить
-                  </div>
-                : <textarea value={text} onChange={e => { setText(e.target.value); sendTyping(); }}
-                    onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-                    placeholder="Сообщение..." rows={1}
-                    className="flex-1 bg-secondary/60 border border-white/10 rounded-2xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:border-sky-500/50 transition-all"
-                    style={{ maxHeight: "100px" }} />
-              }
-              {(text.trim() || pendingFile)
-                ? <button onClick={send}
-                    className="p-3 rounded-full transition-all flex-shrink-0 bg-gradient-to-br from-blue-600 to-blue-700 hover:scale-105 shadow-[0_0_20px_rgba(0,180,230,0.5)]">
-                    <Icon name="Send" size={16} className="text-white" />
-                  </button>
-                : isRecording
-                  ? <button onClick={stopAndSendRecording}
-                      className="p-3 rounded-full transition-all flex-shrink-0 bg-gradient-to-br from-red-500 to-red-600 hover:scale-105 shadow-[0_0_20px_rgba(239,68,68,0.5)]">
+                <textarea value={text} onChange={e => { setText(e.target.value); sendTyping(); }}
+                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+                  placeholder="Сообщение..." rows={1}
+                  className="flex-1 bg-secondary/60 border border-white/10 rounded-2xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:border-sky-500/50 transition-all"
+                  style={{ maxHeight: "100px" }} />
+                {(text.trim() || pendingFile)
+                  ? <button onClick={send}
+                      className="p-3 rounded-full transition-all flex-shrink-0 bg-gradient-to-br from-blue-600 to-blue-700 hover:scale-105 shadow-[0_0_20px_rgba(0,180,230,0.5)]">
                       <Icon name="Send" size={16} className="text-white" />
                     </button>
-                  : <button onMouseDown={startRecording} onTouchStart={startRecording}
-                      className="p-3 rounded-full transition-all flex-shrink-0 bg-secondary hover:bg-white/10">
+                  : <button onClick={startRecording}
+                      className="p-3 rounded-full transition-all flex-shrink-0 bg-secondary hover:bg-white/10 active:scale-95">
                       <Icon name="Mic" size={16} className="text-muted-foreground" />
                     </button>
-              }
-            </div>
+                }
+              </div>
         }
       </div>
 
