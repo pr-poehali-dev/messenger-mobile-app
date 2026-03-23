@@ -1300,25 +1300,32 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     }
 
     setUploading(true);
+    setUploadError(null);
     try {
       const b64 = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
-        reader.onload = () => resolve((reader.result as string).split(",")[1]);
-        reader.onerror = reject;
+        reader.onload = () => {
+          const result = reader.result as string;
+          const base64 = result.includes(",") ? result.split(",")[1] : result;
+          resolve(base64);
+        };
+        reader.onerror = () => reject(new Error("Не удалось прочитать файл"));
         reader.readAsDataURL(file);
       });
+
+      const fileType = file.type || "application/octet-stream";
       const res = await fetch(CHATS_URL, {
         method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ action: "upload", file: b64, file_name: file.name, file_type: file.type }),
+        body: JSON.stringify({ action: "upload", file: b64, file_name: file.name, file_type: fileType }),
       });
       const data = await res.json();
       if (data.file_url) {
-        setPendingFile({ url: data.file_url, name: data.file_name ?? file.name, size: data.file_size ?? file.size, type: data.file_type ?? file.type });
+        setPendingFile({ url: data.file_url, name: data.file_name ?? file.name, size: data.file_size ?? file.size, type: data.file_type ?? fileType });
       } else {
         setUploadError(data.error || "Не удалось загрузить файл");
       }
-    } catch {
-      setUploadError("Ошибка сети при загрузке файла");
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : "Ошибка при загрузке файла");
     } finally {
       setUploading(false);
     }
@@ -1533,16 +1540,17 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
         reader.onerror = rej;
       });
       const base64 = dataUrl.split(",")[1];
+      const normalizedMime = mimeType.split(";")[0].trim() || "audio/webm";
       const upRes = await fetch(CHATS_URL, {
         method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ action: "upload", file_data: base64, file_name: `voice_${Date.now()}.${ext}`, file_type: mimeType }),
+        body: JSON.stringify({ action: "upload", file: base64, file_name: `voice_${Date.now()}.${ext}`, file_type: normalizedMime }),
       });
       const upData = await upRes.json();
-      if (!upData.url) throw new Error("Upload failed");
+      if (!upData.file_url && !upData.url) throw new Error(upData.error || "Ошибка загрузки голосового");
 
       const sendRes = await fetch(CHATS_URL, {
         method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ action: "send", chat_id: chat.id, text: "", file_url: upData.url, file_name: optimistic.file_name, file_size: blob.size, file_type: mimeType }),
+        body: JSON.stringify({ action: "send", chat_id: chat.id, text: "", file_url: upData.file_url || upData.url, file_name: optimistic.file_name, file_size: blob.size, file_type: normalizedMime }),
       });
       const sendData = await sendRes.json();
       if (sendData.message) {

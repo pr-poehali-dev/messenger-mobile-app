@@ -163,8 +163,8 @@ def handler(event: dict, context) -> dict:
     try:
 
         # POST send-code — отправить OTP на email или телефон
-        if method == "POST" and action == "send-code":
-            body = json.loads(event.get("body") or "{}")
+        if action == "send-code":
+            body = body_pre
             contact = body.get("contact", "").strip()[:200]
             purpose = body.get("purpose", "register")
 
@@ -242,8 +242,8 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps(resp_body)}
 
         # POST /verify-code — проверить OTP и зарегистрировать/войти
-        if method == "POST" and action == "verify-code":
-            body = json.loads(event.get("body") or "{}")
+        if action == "verify-code":
+            body = body_pre
             contact = body.get("contact", "").strip()
             code = body.get("code", "").strip()
             purpose = body.get("purpose", "register")
@@ -328,8 +328,8 @@ def handler(event: dict, context) -> dict:
                 return {"statusCode": 200, "headers": cors, "body": json.dumps({"token": token_val, "user": user, "is_new": False})}
 
         # POST /register (оставляем для обратной совместимости)
-        if method == "POST" and action == "register":
-            body = json.loads(event.get("body") or "{}")
+        if action == "register":
+            body = body_pre
             name = body.get("name", "").strip()
             phone = body.get("phone", "").strip()
             password = body.get("password", "")
@@ -356,8 +356,8 @@ def handler(event: dict, context) -> dict:
                     "body": json.dumps({"token": token_val, "user": {"id": user_id, "name": name, "phone": phone, "bio": "", "status": "online", "avatar_url": None}})}
 
         # POST /login
-        if method == "POST" and action == "login":
-            body = json.loads(event.get("body") or "{}")
+        if action == "login":
+            body = body_pre
             phone = body.get("phone", "").strip()
             password = body.get("password", "")
             pw_hash = hash_password(password)
@@ -388,13 +388,13 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"user": user})}
 
         # POST /update-profile
-        if method == "POST" and action == "update-profile":
+        if action == "update-profile":
             if not token:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
             user = get_user_by_token(conn, token)
             if not user:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Сессия истекла"})}
-            body = json.loads(event.get("body") or "{}")
+            body = body_pre
             new_name = body.get("name", "").strip()[:100]
             new_bio = body.get("bio", "").strip()[:500]
             if not new_name:
@@ -410,13 +410,13 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"user": updated})}
 
         # POST /upload-avatar
-        if method == "POST" and action == "upload-avatar":
+        if action == "upload-avatar":
             if not token:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
             user = get_user_by_token(conn, token)
             if not user:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Сессия истекла"})}
-            body = json.loads(event.get("body") or "{}")
+            body = body_pre
             data_url = body.get("image", "")
             if not data_url or "," not in data_url:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Нет изображения"})}
@@ -437,13 +437,13 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"user": updated})}
 
         # POST /change-password
-        if method == "POST" and action == "change-password":
+        if action == "change-password":
             if not token:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
             user = get_user_by_token(conn, token)
             if not user:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Сессия истекла"})}
-            body = json.loads(event.get("body") or "{}")
+            body = body_pre
             current_pw = body.get("current_password", "")
             new_pw = body.get("new_password", "")
             if not current_pw or not new_pw:
@@ -461,7 +461,7 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
 
         # POST /logout
-        if method == "POST" and action == "logout":
+        if action == "logout":
             if token:
                 with conn.cursor() as cur:
                     cur.execute(f"UPDATE {SCHEMA}.sessions SET expires_at = NOW() WHERE token = %s", (token,))
@@ -488,13 +488,13 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"contacts": contacts})}
 
         # POST /contacts/add
-        if method == "POST" and action == "contacts/add":
+        if action == "contacts/add":
             if not token:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
             user = get_user_by_token(conn, token)
             if not user:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Сессия истекла"})}
-            body = json.loads(event.get("body") or "{}")
+            body = body_pre
             name = body.get("name", "").strip()
             phone = body.get("phone", "").strip()
             if not name or not phone:
@@ -520,13 +520,13 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"contact": {"id": contact_id, "name": name, "phone": phone, "user_id": contact_user_id, "status": status, "avatar_url": avatar_url}})}
 
         # POST /contacts/sync
-        if method == "POST" and action == "contacts/sync":
+        if action == "contacts/sync":
             if not token:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
             user = get_user_by_token(conn, token)
             if not user:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Сессия истекла"})}
-            body = json.loads(event.get("body") or "{}")
+            body = body_pre
             phonebook = body.get("contacts", [])
             if not phonebook:
                 return {"statusCode": 200, "headers": cors, "body": json.dumps({"synced": 0, "contacts": []})}
@@ -553,13 +553,13 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"synced": len(added), "contacts": added})}
 
         # POST /contacts/remove
-        if method == "POST" and action == "contacts/remove":
+        if action == "contacts/remove":
             if not token:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
             user = get_user_by_token(conn, token)
             if not user:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Сессия истекла"})}
-            body = json.loads(event.get("body") or "{}")
+            body = body_pre
             contact_id = body.get("contact_id")
             if not contact_id:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Укажите contact_id"})}
@@ -569,13 +569,13 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
 
         # POST /block — заблокировать пользователя
-        if method == "POST" and action == "block":
+        if action == "block":
             if not token:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
             user = get_user_by_token(conn, token)
             if not user:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Сессия истекла"})}
-            body = json.loads(event.get("body") or "{}")
+            body = body_pre
             target_id = body.get("user_id")
             if not target_id:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "user_id обязателен"})}
@@ -590,13 +590,13 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "blocked": True})}
 
         # POST /unblock — разблокировать пользователя
-        if method == "POST" and action == "unblock":
+        if action == "unblock":
             if not token:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
             user = get_user_by_token(conn, token)
             if not user:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Сессия истекла"})}
-            body = json.loads(event.get("body") or "{}")
+            body = body_pre
             target_id = body.get("user_id")
             if not target_id:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "user_id обязателен"})}
@@ -656,13 +656,13 @@ def handler(event: dict, context) -> dict:
             })}
 
         # POST /report — пожаловаться на пользователя или сообщение
-        if method == "POST" and action == "report":
+        if action == "report":
             if not token:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
             user = get_user_by_token(conn, token)
             if not user:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Сессия истекла"})}
-            body = json.loads(event.get("body") or "{}")
+            body = body_pre
             reported_user_id = body.get("user_id")
             reported_message_id = body.get("message_id")
             reason = body.get("reason", "").strip()
