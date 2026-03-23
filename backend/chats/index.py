@@ -54,7 +54,6 @@ def handler(event: dict, context) -> dict:
     except:
         body_pre = {}
     action = body_pre.get("action", "") or path.strip("/").split("/")[-1]
-    print(f"[DEBUG] action={action} token_present={bool(token)} headers_keys={list(headers.keys())[:8]}")
 
     conn = get_conn()
     try:
@@ -643,19 +642,23 @@ def handler(event: dict, context) -> dict:
             # ── Строгий whitelist MIME-типов ──
             ALLOWED_MIME = {
                 "image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif",
-                "image/webp": ".webp", "image/heic": ".heic",
+                "image/webp": ".webp", "image/heic": ".heic", "image/jpg": ".jpg",
                 "video/mp4": ".mp4", "video/webm": ".webm", "video/quicktime": ".mov",
+                "video/x-msvideo": ".avi", "video/mpeg": ".mpeg",
                 "audio/webm": ".webm", "audio/ogg": ".ogg", "audio/mpeg": ".mp3",
-                "audio/mp4": ".m4a", "audio/wav": ".wav",
+                "audio/mp4": ".m4a", "audio/wav": ".wav", "audio/aac": ".aac",
+                "audio/webm;codecs=opus": ".webm", "audio/x-m4a": ".m4a",
                 "application/pdf": ".pdf",
-                "application/zip": ".zip",
+                "application/zip": ".zip", "application/x-zip-compressed": ".zip",
                 "application/msword": ".doc",
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
                 "application/vnd.ms-excel": ".xls",
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
                 "text/plain": ".txt",
             }
-            if file_type not in ALLOWED_MIME:
+            # Нормализуем тип (убираем параметры вроде ;codecs=opus для поиска)
+            file_type_base = file_type.split(";")[0].strip()
+            if file_type not in ALLOWED_MIME and file_type_base not in ALLOWED_MIME:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Тип файла не разрешён"})}
 
             # ── Безопасный decode base64 ──
@@ -671,7 +674,7 @@ def handler(event: dict, context) -> dict:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Файл слишком большой (макс. 25 МБ)"})}
 
             # ── Безопасное имя: только uuid, расширение из whitelist ──
-            ext = ALLOWED_MIME[file_type]
+            ext = ALLOWED_MIME.get(file_type) or ALLOWED_MIME.get(file_type_base, ".bin")
             key_name = f"{uuid.uuid4().hex}{ext}"
             key = f"chat-files/{key_name}"
 
