@@ -4322,7 +4322,17 @@ function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (us
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchQ, setSearchQ] = useState("");
 
-  useEffect(() => { loadContacts(); }, [token]);
+  const [showSyncBanner, setShowSyncBanner] = useState(false);
+
+  useEffect(() => {
+    loadContacts();
+    // Показываем баннер синхронизации если ещё не синхронизировали
+    const syncKey = `pulse_contacts_synced_${token?.slice(0, 8)}`;
+    if (!localStorage.getItem(syncKey) && "contacts" in navigator) {
+      setShowSyncBanner(true);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
 
   async function loadContacts() {
     setLoading(true);
@@ -4358,6 +4368,9 @@ function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (us
       const data = await res.json();
       setSyncDone(data.synced ?? 0);
       setTimeout(() => setSyncDone(null), 3000);
+      const syncKey = `pulse_contacts_synced_${token?.slice(0, 8)}`;
+      localStorage.setItem(syncKey, "1");
+      setShowSyncBanner(false);
       await loadContacts();
     } finally { setSyncing(false); }
   }
@@ -4455,6 +4468,26 @@ function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (us
         </div>
       </div>
 
+      {/* Баннер предложения синхронизации */}
+      {showSyncBanner && (
+        <div className="mx-4 mb-2 flex items-center gap-3 px-4 py-3 rounded-2xl bg-sky-500/10 border border-sky-500/20 animate-fade-in">
+          <Icon name="BookUser" size={16} className="text-sky-400 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-xs text-sky-300 font-medium">Синхронизировать телефонную книгу?</p>
+            <p className="text-[11px] text-muted-foreground">Найдём друзей из контактов в приложении</p>
+          </div>
+          <div className="flex gap-1.5">
+            <button onClick={syncPhonebook} className="px-3 py-1.5 rounded-xl bg-sky-500 text-white text-xs font-semibold hover:bg-sky-400 transition-colors">
+              Да
+            </button>
+            <button onClick={() => { setShowSyncBanner(false); const k = `pulse_contacts_synced_${token?.slice(0,8)}`; localStorage.setItem(k,"1"); }}
+              className="px-3 py-1.5 rounded-xl bg-white/10 text-muted-foreground text-xs hover:bg-white/20 transition-colors">
+              Нет
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Sync banner */}
       {syncDone !== null && (
         <div className="mx-4 mb-2 flex items-center gap-2 px-3 py-2 rounded-xl bg-green-500/10 border border-green-500/20 animate-fade-in">
@@ -4524,7 +4557,7 @@ function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (us
                         <div className="text-xs text-muted-foreground">{c.phone}</div>
                         {c.user_id && <div className="text-[10px] text-sky-400 mt-0.5">В приложении</div>}
                       </div>
-                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="flex gap-1">
                         {c.user_id && (
                           <>
                             <button onClick={() => onOpenChat?.(c.user_id!)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
@@ -4535,7 +4568,7 @@ function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (us
                             </button>
                           </>
                         )}
-                        <button onClick={() => removeContact(c.id)} className="p-2 hover:bg-red-500/10 rounded-full transition-colors">
+                        <button onClick={() => removeContact(c.id)} className="p-2 hover:bg-red-500/10 rounded-full transition-colors opacity-0 group-hover:opacity-100 transition-opacity">
                           <Icon name="Trash2" size={15} className="text-muted-foreground hover:text-red-400 transition-colors" />
                         </button>
                       </div>
