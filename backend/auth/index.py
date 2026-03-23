@@ -687,5 +687,9 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "report_id": report_id})}
 
         return {"statusCode": 404, "headers": cors, "body": json.dumps({"error": "Not found"})}
+    except Exception as e:
+        import traceback
+        print("ERROR:", traceback.format_exc())
+        return {"statusCode": 500, "headers": cors, "body": json.dumps({"error": f"Внутренняя ошибка: {str(e)}"})}
     finally:
         conn.close()
