@@ -187,7 +187,7 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User, isNew?: bo
       if (data.dev_code) setDevCode(data.dev_code);
       setStep("otp");
       setResendTimer(60);
-    } catch { setError("Ошибка сети. Попробуйте снова"); }
+    } catch (e) { console.error("sendCode error:", e); setError(`Ошибка: ${e instanceof Error ? e.message : String(e)}`); }
     finally { setLoading(false); }
   }
 
