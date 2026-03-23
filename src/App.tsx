@@ -145,6 +145,7 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User, isNew?: bo
   const [devCode, setDevCode] = useState(""); // только при отсутствии SMTP/SMS
   const [contactType, setContactType] = useState<"phone" | "email">("phone");
   const [showPolicy, setShowPolicy] = useState(false);
+  const [showTerms, setShowTerms] = useState(false);
 
   const otpRefs = [
     useRef<HTMLInputElement>(null),
@@ -399,11 +400,154 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User, isNew?: bo
 
         <p className="text-center text-xs text-muted-foreground mt-5 animate-fade-in" style={{ animationDelay: "0.2s" }}>
           Продолжая, вы соглашаетесь с{" "}
+          <button onClick={() => setShowTerms(true)}
+            className="text-sky-400 hover:text-sky-300 underline underline-offset-2 transition-colors">
+            условиями использования
+          </button>
+          {" "}и{" "}
           <button onClick={() => setShowPolicy(true)}
             className="text-sky-400 hover:text-sky-300 underline underline-offset-2 transition-colors">
             политикой конфиденциальности
           </button>
         </p>
+
+        {/* Модалка с условиями использования */}
+        {showTerms && (
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fade-in"
+            onClick={() => setShowTerms(false)}>
+            <div className="w-full max-w-lg bg-[hsl(var(--background))] border border-white/10 rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[85vh] flex flex-col"
+              onClick={e => e.stopPropagation()}>
+              {/* Шапка */}
+              <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-white/8 flex-shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-cyan-500/15 flex items-center justify-center">
+                    <Icon name="FileText" size={16} className="text-cyan-400" />
+                  </div>
+                  <div>
+                    <h2 className="font-golos font-bold text-foreground text-base">Условия использования</h2>
+                    <p className="text-[11px] text-muted-foreground">Версия 1.0 · 23 марта 2026</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowTerms(false)}
+                  className="p-2 rounded-full hover:bg-white/10 transition-colors text-muted-foreground">
+                  <Icon name="X" size={18} />
+                </button>
+              </div>
+
+              {/* Контент */}
+              <div className="overflow-y-auto flex-1 px-5 py-4 space-y-5 scroll-container">
+
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  Используя мессенджер <strong className="text-foreground">Каспер</strong>, вы принимаете настоящие Условия. Пожалуйста, ознакомьтесь с ними внимательно.
+                </p>
+
+                {[
+                  {
+                    num: "1", color: "cyan", icon: "UserCheck", title: "Регистрация и аккаунт",
+                    items: [
+                      "Для использования сервиса необходимо создать аккаунт с подтверждением через телефон или email.",
+                      "Вам должно быть не менее 14 лет для регистрации.",
+                      "Вы несёте ответственность за сохранность доступа к своему аккаунту.",
+                      "Один человек — один аккаунт. Создание множества аккаунтов запрещено.",
+                    ],
+                  },
+                  {
+                    num: "2", color: "green", icon: "CheckCircle", title: "Допустимое использование",
+                    items: [
+                      "Сервис предназначен для личного и делового общения.",
+                      "Разрешено обмениваться текстом, медиафайлами, документами и голосовыми сообщениями.",
+                      "Вы можете создавать группы и каналы для общения с несколькими людьми.",
+                      "Звонки доступны в формате аудио и видео между пользователями.",
+                    ],
+                  },
+                  {
+                    num: "3", color: "red", icon: "Ban", title: "Запрещённые действия",
+                    items: [
+                      "Рассылка спама, нежелательных сообщений и навязчивая реклама.",
+                      "Распространение незаконного, оскорбительного или вредоносного контента.",
+                      "Попытки взлома, обход систем защиты, DDoS-атаки.",
+                      "Выдача себя за другого человека или организацию.",
+                      "Сбор персональных данных других пользователей без их согласия.",
+                    ],
+                  },
+                  {
+                    num: "4", color: "yellow", icon: "Copyright", title: "Контент и права",
+                    items: [
+                      "Вы сохраняете все права на контент, который публикуете.",
+                      "Загружая контент, вы даёте нам право хранить и передавать его адресатам.",
+                      "Запрещено загружать контент, нарушающий авторские права третьих лиц.",
+                      "Мы не претендуем на владение вашими сообщениями и файлами.",
+                    ],
+                  },
+                  {
+                    num: "5", color: "orange", icon: "AlertTriangle", title: "Ответственность",
+                    items: [
+                      "Сервис предоставляется «как есть». Мы не гарантируем бесперебойную работу 24/7.",
+                      "Мы не несём ответственности за содержание переписки между пользователями.",
+                      "Мы оставляем за собой право заблокировать аккаунт при нарушении условий.",
+                      "При обнаружении нарушений — свяжитесь с поддержкой.",
+                    ],
+                  },
+                  {
+                    num: "6", color: "purple", icon: "RefreshCw", title: "Изменение условий",
+                    items: [
+                      "Мы можем обновлять настоящие Условия. Уведомление поступит в приложении.",
+                      "Продолжение использования сервиса после изменений означает согласие с ними.",
+                      "Если вы не согласны с условиями — вы вправе удалить свой аккаунт.",
+                    ],
+                  },
+                ].map(section => {
+                  const colorMap: Record<string, { dot: string; text: string }> = {
+                    cyan:   { dot: "bg-cyan-500/20",   text: "text-cyan-400"   },
+                    green:  { dot: "bg-green-500/20",  text: "text-green-400"  },
+                    red:    { dot: "bg-red-500/20",    text: "text-red-400"    },
+                    yellow: { dot: "bg-yellow-500/20", text: "text-yellow-400" },
+                    orange: { dot: "bg-orange-500/20", text: "text-orange-400" },
+                    purple: { dot: "bg-purple-500/20", text: "text-purple-400" },
+                  };
+                  const c = colorMap[section.color];
+                  return (
+                    <div key={section.num} className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className={`w-5 h-5 rounded-full ${c.dot} ${c.text} text-[11px] font-bold flex items-center justify-center flex-shrink-0`}>
+                          {section.num}
+                        </span>
+                        <h3 className="text-sm font-golos font-bold text-foreground">{section.title}</h3>
+                      </div>
+                      <ul className="space-y-1.5 pl-1">
+                        {section.items.map(item => (
+                          <li key={item} className="flex items-start gap-2">
+                            <Icon name="ChevronRight" size={12} className={`${c.text} mt-0.5 flex-shrink-0 opacity-70`} />
+                            <span className="text-xs text-muted-foreground leading-relaxed">{item}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })}
+
+                <div className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-white/4 border border-white/8">
+                  <Icon name="Info" size={14} className="text-muted-foreground flex-shrink-0" />
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    По всем вопросам обращайтесь в службу поддержки. Нажимая «Понятно», вы подтверждаете, что ознакомились с условиями.
+                  </p>
+                </div>
+
+                <div className="text-center text-[11px] text-muted-foreground/50 pt-1 pb-1">
+                  Каспер · Условия использования · v1.0
+                </div>
+              </div>
+
+              {/* Кнопка */}
+              <div className="px-5 pb-5 pt-3 flex-shrink-0 border-t border-white/8">
+                <button onClick={() => setShowTerms(false)}
+                  className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-blue-600 to-blue-700 text-white font-golos font-semibold text-sm hover:opacity-90 transition-all shadow-[0_0_20px_rgba(0,119,182,0.3)]">
+                  Понятно
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Модалка с политикой конфиденциальности */}
         {showPolicy && (
