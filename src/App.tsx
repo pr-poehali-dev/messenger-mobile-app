@@ -19,7 +19,7 @@ function apiHeaders(token?: string | null) {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Tab = "chats" | "contacts" | "calls" | "status" | "profile" | "settings";
+type Tab = "chats" | "contacts" | "calls" | "profile" | "settings";
 type UserRole = "admin" | "member" | "moderator";
 
 interface User {
@@ -1290,22 +1290,19 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
 
   async function uploadFileDirect(file: File): Promise<{ file_url: string; file_name: string; file_type: string; file_size: number }> {
     const fileType = file.type || "application/octet-stream";
-    // 1. Получаем presigned URL от бэкенда
-    const res = await fetch(CHATS_URL, {
-      method: "POST", headers: apiHeaders(token),
-      body: JSON.stringify({ action: "presigned-url", file_name: file.name, file_type: fileType, file_size: file.size }),
+    const form = new FormData();
+    form.append("file", file, file.name);
+
+    const headers: Record<string, string> = {};
+    if (token) headers["X-Auth-Token"] = token;
+
+    const res = await fetch(`${CHATS_URL}?action=upload&token=${encodeURIComponent(token)}`, {
+      method: "POST",
+      headers,
+      body: form,
     });
     const data = await res.json();
-    if (!data.upload_url) throw new Error(data.error || "Не удалось получить URL загрузки");
-
-    // 2. Загружаем файл напрямую в S3
-    const uploadRes = await fetch(data.upload_url, {
-      method: "PUT",
-      headers: { "Content-Type": data.file_type || fileType },
-      body: file,
-    });
-    if (!uploadRes.ok) throw new Error(`Ошибка загрузки: ${uploadRes.status}`);
-
+    if (!data.file_url) throw new Error(data.error || "Не удалось загрузить файл");
     return { file_url: data.file_url, file_name: data.file_name || file.name, file_type: data.file_type || fileType, file_size: file.size };
   }
 
@@ -5576,6 +5573,41 @@ function PinScreen({ mode, onSuccess, onCancel }: {
   );
 }
 
+// ─── Bottom Navigation ────────────────────────────────────────────────────────
+
+function BottomNav({ active, onChange, unreadCount }: { active: Tab; onChange: (t: Tab) => void; unreadCount: number }) {
+  const items: { tab: Tab; icon: string; label: string }[] = [
+    { tab: "chats", icon: "MessageCircle", label: "Чаты" },
+    { tab: "contacts", icon: "Users", label: "Контакты" },
+    { tab: "calls", icon: "Phone", label: "Звонки" },
+    { tab: "profile", icon: "User", label: "Профиль" },
+    { tab: "settings", icon: "Settings", label: "Настройки" },
+  ];
+  return (
+    <div className="flex-shrink-0 glass border-t border-white/5 flex items-center justify-around px-2 pb-safe"
+      style={{ paddingBottom: "max(env(safe-area-inset-bottom), 8px)", paddingTop: 6 }}>
+      {items.map(({ tab, icon, label }) => (
+        <button key={tab} onClick={() => onChange(tab)}
+          className={`relative flex flex-col items-center gap-0.5 px-3 py-1 rounded-2xl transition-all min-w-0
+            ${active === tab ? "text-sky-400" : "text-muted-foreground hover:text-foreground"}`}>
+          <div className="relative">
+            <Icon name={icon as Parameters<typeof Icon>[0]["name"]} size={22} />
+            {tab === "chats" && unreadCount > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-blue-600 text-white text-[10px] font-bold flex items-center justify-center">
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
+            )}
+          </div>
+          <span className="text-[10px] font-medium truncate">{label}</span>
+          {active === tab && (
+            <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-sky-400" />
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // ─── Root App ─────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -5876,7 +5908,6 @@ export default function App() {
     }} />,
     contacts: <ContactsTab token={token} onCall={startCall} onOpenChat={openChatWith} />,
     calls: <CallsTab token={token} onCall={startCall} />,
-    status: <StatusTab user={user} />,
     profile: <ProfileTab user={user} token={token} onLogout={handleLogout} onUserUpdate={u => { setUser(u); localStorage.setItem("pulse_user", JSON.stringify(u)); }} onDeleteAccount={handleLogout} />,
     settings: <SettingsTab onLogout={handleLogout} onTestSound={playSound} />,
   };
@@ -5885,7 +5916,6 @@ export default function App() {
     { tab: "chats" as Tab, icon: "MessageCircle", label: "Чаты" },
     { tab: "contacts" as Tab, icon: "Users", label: "Контакты" },
     { tab: "calls" as Tab, icon: "Phone", label: "Звонки" },
-    { tab: "status" as Tab, icon: "Circle", label: "Статус" },
     { tab: "profile" as Tab, icon: "User", label: "Профиль" },
     { tab: "settings" as Tab, icon: "Settings", label: "Настройки" },
   ];

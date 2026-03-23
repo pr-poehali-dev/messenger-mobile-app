@@ -35,8 +35,8 @@ def auth_user(conn, token: str):
 def handler(event: dict, context) -> dict:
     cors = {
         "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, X-Auth-Token",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, X-Auth-Token, X-Requested-With",
     }
 
     if event.get("httpMethod") == "OPTIONS":
@@ -48,12 +48,25 @@ def handler(event: dict, context) -> dict:
     token = (headers.get("X-Auth-Token") or headers.get("x-auth-token") or
              headers.get("X-authorization") or headers.get("x-authorization") or "")
 
-    body_raw = event.get("body") or "{}"
-    try:
-        body_pre = json.loads(body_raw)
-    except:
+    content_type = headers.get("Content-Type") or headers.get("content-type") or ""
+    query_params = event.get("queryStringParameters") or {}
+
+    # Для multipart/form-data (загрузка файлов) — парсим вручную
+    is_multipart = "multipart/form-data" in content_type
+    if is_multipart:
         body_pre = {}
-    action = body_pre.get("action", "") or path.strip("/").split("/")[-1]
+        body_raw = ""
+        # action и token берём из query string
+        action = query_params.get("action", "upload")
+        if query_params.get("token"):
+            token = query_params.get("token", token)
+    else:
+        body_raw = event.get("body") or "{}"
+        try:
+            body_pre = json.loads(body_raw)
+        except:
+            body_pre = {}
+        action = body_pre.get("action", "") or path.strip("/").split("/")[-1]
 
     conn = get_conn()
     try:
@@ -681,17 +694,69 @@ def handler(event: dict, context) -> dict:
                     WHERE sender_id = %s AND file_url IS NOT NULL
                       AND created_at > NOW() - INTERVAL '1 hour'
                 """, (user_id,))
-                if cur.fetchone()[0] >= 20:
+                if cur.fetchone()[0] >= 50:
                     return {"statusCode": 429, "headers": cors, "body": json.dumps({"error": "Слишком много загрузок. Попробуйте позже"})}
 
-            body = body_pre
-            file_b64 = body.get("file") or body.get("file_data")
-            file_name = (body.get("file_name") or "file").strip()[:255]
-            file_type = (body.get("file_type") or "application/octet-stream").strip()[:100]
-            print(f"[UPLOAD] file_type={file_type!r} file_name={file_name!r} b64_len={len(file_b64) if file_b64 else 0} keys={list(body.keys())}")
+            # Парсим multipart/form-data
+            if is_multipart:
+                import email
+                raw_body = event.get("body") or ""
+                is_b64_encoded = event.get("isBase64Encoded", False)
+                if is_b64_encoded:
+                    raw_bytes = base64.b64decode(raw_body)
+                else:
+                    raw_bytes = raw_body.encode("latin-1") if isinstance(raw_body, str) else raw_body
 
-            if not file_b64:
-                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "file required"})}
+                boundary = ""
+                for part in content_type.split(";"):
+                    part = part.strip()
+                    if part.startswith("boundary="):
+                        boundary = part[9:].strip('"')
+                        break
+
+                file_data = None
+                file_name = "file"
+                file_type = "application/octet-stream"
+
+                if boundary:
+                    delimiter = f"--{boundary}".encode()
+                    parts = raw_bytes.split(delimiter)
+                    for p in parts:
+                        if b"Content-Disposition" not in p:
+                            continue
+                        header_end = p.find(b"\r\n\r\n")
+                        if header_end == -1:
+                            continue
+                        headers_raw = p[:header_end].decode("utf-8", errors="replace")
+                        body_part = p[header_end+4:]
+                        if body_part.endswith(b"\r\n"):
+                            body_part = body_part[:-2]
+                        if 'name="file"' in headers_raw:
+                            file_data = body_part
+                            for h_line in headers_raw.splitlines():
+                                if "Content-Type:" in h_line:
+                                    file_type = h_line.split("Content-Type:")[-1].strip()
+                                if "filename=" in h_line:
+                                    fn = h_line.split("filename=")[-1].strip().strip('"')
+                                    if fn:
+                                        file_name = fn
+                if file_data is None:
+                    return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Файл не найден в запросе"})}
+            else:
+                body = body_pre
+                file_b64 = body.get("file") or body.get("file_data")
+                file_name = (body.get("file_name") or "file").strip()[:255]
+                file_type = (body.get("file_type") or "application/octet-stream").strip()[:100]
+
+                if not file_b64:
+                    return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "file required"})}
+                try:
+                    file_data = base64.b64decode(file_b64, validate=True)
+                except Exception:
+                    return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Некорректный файл"})}
+
+            if not file_data:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Файл пуст"})}
 
             # ── Строгий whitelist MIME-типов ──
             ALLOWED_MIME = {
@@ -710,29 +775,20 @@ def handler(event: dict, context) -> dict:
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
                 "text/plain": ".txt",
             }
-            # Нормализуем тип (убираем параметры вроде ;codecs=opus для поиска)
             file_type_base = file_type.split(";")[0].strip()
-            if file_type not in ALLOWED_MIME and file_type_base not in ALLOWED_MIME:
-                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Тип файла не разрешён"})}
-
-            # ── Безопасный decode base64 ──
-            try:
-                file_data = base64.b64decode(file_b64, validate=True)
-            except Exception:
-                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Некорректный файл"})}
+            resolved_type = file_type if file_type in ALLOWED_MIME else file_type_base
+            if resolved_type not in ALLOWED_MIME:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": f"Тип файла не разрешён: {file_type}"})}
 
             file_size = len(file_data)
-            if file_size == 0:
-                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Файл пуст"})}
-            if file_size > 25 * 1024 * 1024:
-                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Файл слишком большой (макс. 25 МБ)"})}
+            if file_size > 50 * 1024 * 1024:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Файл слишком большой (макс. 50 МБ)"})}
 
             # ── Безопасное имя: только uuid, расширение из whitelist ──
-            ext = ALLOWED_MIME.get(file_type) or ALLOWED_MIME.get(file_type_base, ".bin")
+            ext = ALLOWED_MIME.get(resolved_type, ".bin")
             key_name = f"{uuid.uuid4().hex}{ext}"
             key = f"chat-files/{key_name}"
 
-            # Для отображения пользователю — очищаем оригинальное имя
             import re as _re
             safe_display = _re.sub(r'[^\w.\-\s]', '_', file_name)[:100] or "file"
 
@@ -744,9 +800,10 @@ def handler(event: dict, context) -> dict:
             )
             s3.put_object(
                 Bucket="files", Key=key, Body=file_data,
-                ContentType=file_type,
+                ContentType=resolved_type,
             )
             cdn_url = f"https://cdn.poehali.dev/projects/{os.environ['AWS_ACCESS_KEY_ID']}/bucket/{key}"
+            print(f"[UPLOAD OK] key={key} size={file_size} type={resolved_type}")
 
             return {
                 "statusCode": 200, "headers": cors,
