@@ -357,6 +357,26 @@ def handler(event: dict, context) -> dict:
                     if not cur.fetchone():
                         return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Нет доступа"})}
 
+                    # Проверяем блокировку в личных чатах
+                    cur.execute(f"""
+                        SELECT cm.user_id FROM {SCHEMA}.chat_members cm
+                        JOIN {SCHEMA}.chats c ON c.id = cm.chat_id
+                        WHERE cm.chat_id = %s AND cm.user_id != %s AND c.is_group = FALSE
+                        LIMIT 1
+                    """, (chat_id, user_id))
+                    peer_row = cur.fetchone()
+                    if peer_row:
+                        peer_id = peer_row[0]
+                        cur.execute(f"""
+                            SELECT COUNT(*) FROM {SCHEMA}.blocked_users
+                            WHERE is_active = TRUE AND (
+                                (blocker_id = %s AND blocked_id = %s) OR
+                                (blocker_id = %s AND blocked_id = %s)
+                            )
+                        """, (user_id, peer_id, peer_id, user_id))
+                        if cur.fetchone()[0] > 0:
+                            return {"statusCode": 403, "headers": cors, "body": json.dumps({"error": "Нельзя отправить сообщение: пользователь заблокирован"})}
+
                     reply_text = None
                     reply_name = None
                     if reply_to_id:

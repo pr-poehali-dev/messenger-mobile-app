@@ -538,6 +538,93 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
 
+        # POST /block — заблокировать пользователя
+        if method == "POST" and path.endswith("/block"):
+            if not token:
+                return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
+            user = get_user_by_token(conn, token)
+            if not user:
+                return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Сессия истекла"})}
+            body = json.loads(event.get("body") or "{}")
+            target_id = body.get("user_id")
+            if not target_id:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "user_id обязателен"})}
+            if target_id == user["id"]:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Нельзя заблокировать себя"})}
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    INSERT INTO {SCHEMA}.blocked_users (blocker_id, blocked_id)
+                    VALUES (%s, %s) ON CONFLICT DO NOTHING
+                """, (user["id"], target_id))
+            conn.commit()
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "blocked": True})}
+
+        # POST /unblock — разблокировать пользователя
+        if method == "POST" and path.endswith("/unblock"):
+            if not token:
+                return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
+            user = get_user_by_token(conn, token)
+            if not user:
+                return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Сессия истекла"})}
+            body = json.loads(event.get("body") or "{}")
+            target_id = body.get("user_id")
+            if not target_id:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "user_id обязателен"})}
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    UPDATE {SCHEMA}.blocked_users SET is_active = FALSE
+                    WHERE blocker_id = %s AND blocked_id = %s
+                """, (user["id"], target_id))
+            conn.commit()
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "blocked": False})}
+
+        # GET /blocked-list — список заблокированных
+        if method == "GET" and "blocked-list" in path:
+            if not token:
+                return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
+            user = get_user_by_token(conn, token)
+            if not user:
+                return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Сессия истекла"})}
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT u.id, u.name, u.phone, u.avatar_url, bu.created_at
+                    FROM {SCHEMA}.blocked_users bu
+                    JOIN {SCHEMA}.users u ON u.id = bu.blocked_id
+                    WHERE bu.blocker_id = %s AND bu.is_active = TRUE
+                    ORDER BY bu.created_at DESC
+                """, (user["id"],))
+                rows = cur.fetchall()
+            blocked = [{"id": r[0], "name": r[1], "phone": r[2], "avatar_url": r[3],
+                        "blocked_at": str(r[4]) if r[4] else None} for r in rows]
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"blocked": blocked})}
+
+        # GET /block-status?user_id=X — проверить статус блокировки
+        if method == "GET" and "block-status" in path:
+            if not token:
+                return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
+            user = get_user_by_token(conn, token)
+            if not user:
+                return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Сессия истекла"})}
+            params = event.get("queryStringParameters") or {}
+            target_id = params.get("user_id")
+            if not target_id:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "user_id обязателен"})}
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT COUNT(*) FROM {SCHEMA}.blocked_users
+                    WHERE blocker_id = %s AND blocked_id = %s AND is_active = TRUE
+                """, (user["id"], int(target_id)))
+                i_blocked = cur.fetchone()[0] > 0
+                cur.execute(f"""
+                    SELECT COUNT(*) FROM {SCHEMA}.blocked_users
+                    WHERE blocker_id = %s AND blocked_id = %s AND is_active = TRUE
+                """, (int(target_id), user["id"]))
+                blocked_me = cur.fetchone()[0] > 0
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({
+                "i_blocked": i_blocked,
+                "blocked_me": blocked_me,
+            })}
+
         return {"statusCode": 404, "headers": cors, "body": json.dumps({"error": "Not found"})}
     finally:
         conn.close()

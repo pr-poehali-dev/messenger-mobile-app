@@ -834,6 +834,10 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
   const [searchQuery, setSearchQuery] = useState("");
   const [searchIdx, setSearchIdx] = useState(0);
   const [showStats, setShowStats] = useState(false);
+  const [isBlocked, setIsBlocked] = useState(false);
+  const [blockedMe, setBlockedMe] = useState(false);
+  const [blockLoading, setBlockLoading] = useState(false);
+  const [showBlockMenu, setShowBlockMenu] = useState(false);
   const [forwardMsg, setForwardMsg] = useState<{ text: string; file_url?: string | null; file_name?: string | null; file_type?: string | null } | null>(null);
   const [forwardSearch, setForwardSearch] = useState("");
   const [forwarding, setForwarding] = useState<number | null>(null);
@@ -897,6 +901,15 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     const id = setInterval(pollPresence, 15000);
     return () => clearInterval(id);
   }, [chat.id, chat.is_group, token]);
+
+  // Загружаем статус блокировки для личных чатов
+  useEffect(() => {
+    if (chat.is_group || !chat.peer_id) return;
+    fetch(`${AUTH_URL}/block-status?user_id=${chat.peer_id}`, { headers: apiHeaders(token) })
+      .then(r => r.json())
+      .then(d => { setIsBlocked(!!d.i_blocked); setBlockedMe(!!d.blocked_me); })
+      .catch(() => {});
+  }, [chat.id, chat.is_group, chat.peer_id, token]);
 
   function formatLastSeen(iso: string | null): string {
     if (!iso) return "давно";
@@ -1284,6 +1297,22 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     }).catch(() => {});
   }
 
+  async function toggleBlock() {
+    if (!chat.peer_id) return;
+    setBlockLoading(true);
+    setShowBlockMenu(false);
+    try {
+      const endpoint = isBlocked ? "/unblock" : "/block";
+      const res = await fetch(`${AUTH_URL}${endpoint}`, {
+        method: "POST", headers: apiHeaders(token),
+        body: JSON.stringify({ user_id: chat.peer_id }),
+      });
+      const data = await res.json();
+      if (data.ok) setIsBlocked(!isBlocked);
+    } catch { /* ignore */ }
+    finally { setBlockLoading(false); }
+  }
+
   async function loadStats() {
     if (stats || statsLoading) return;
     setStatsLoading(true);
@@ -1657,7 +1686,56 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
               </button>
             </>
           )}
+          {/* Меню блокировки для личных чатов */}
+          {!chat.is_group && chat.peer_id && (
+            <div className="relative">
+              <button onClick={() => setShowBlockMenu(v => !v)}
+                className={`p-2 rounded-full transition-colors ${showBlockMenu ? "bg-white/10" : "hover:bg-white/10 text-muted-foreground"}`}>
+                {blockLoading
+                  ? <div className="w-4 h-4 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+                  : <Icon name="MoreVertical" size={18} />}
+              </button>
+              {showBlockMenu && (
+                <div className="absolute right-0 top-10 z-30 w-52 glass border border-white/10 rounded-2xl shadow-2xl overflow-hidden animate-fade-in">
+                  {isBlocked ? (
+                    <button onClick={toggleBlock}
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-green-500/10 transition-colors text-left">
+                      <Icon name="ShieldOff" size={15} className="text-green-400" />
+                      <div>
+                        <p className="text-sm text-green-300 font-medium">Разблокировать</p>
+                        <p className="text-[11px] text-muted-foreground">Снять ограничения</p>
+                      </div>
+                    </button>
+                  ) : (
+                    <button onClick={toggleBlock}
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-red-500/10 transition-colors text-left">
+                      <Icon name="Shield" size={15} className="text-red-400" />
+                      <div>
+                        <p className="text-sm text-red-300 font-medium">Заблокировать</p>
+                        <p className="text-[11px] text-muted-foreground">Добавить в чёрный список</p>
+                      </div>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
+
+        {/* Баннер блокировки */}
+        {!chat.is_group && (isBlocked || blockedMe) && (
+          <div className="flex items-center gap-2 mt-2 px-3 py-2 rounded-xl bg-red-500/8 border border-red-500/15 animate-fade-in">
+            <Icon name="Shield" size={13} className="text-red-400 flex-shrink-0" />
+            <span className="text-xs text-red-300">
+              {isBlocked ? "Вы заблокировали этого пользователя" : "Этот пользователь вас заблокировал"}
+            </span>
+            {isBlocked && (
+              <button onClick={toggleBlock} className="ml-auto text-[11px] text-red-400 hover:text-red-300 underline transition-colors">
+                Разблокировать
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Members / Channel management panel */}
         {chat.is_group && showMembers && (
@@ -3114,6 +3192,10 @@ function ProfileTab({ user, token, onLogout, onUserUpdate, onDeleteAccount }: {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [showBlacklist, setShowBlacklist] = useState(false);
+  const [blockedUsers, setBlockedUsers] = useState<{ id: number; name: string; phone?: string | null; avatar_url?: string | null; blocked_at: string | null }[]>([]);
+  const [blacklistLoading, setBlacklistLoading] = useState(false);
+  const [unblockingId, setUnblockingId] = useState<number | null>(null);
 
   const [changingPw, setChangingPw] = useState(false);
   const [pinMode, setPinMode] = useState<"setup" | "change" | null>(null);
@@ -3450,6 +3532,79 @@ function ProfileTab({ user, token, onLogout, onUserUpdate, onDeleteAccount }: {
           <div className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-green-500/10 border border-green-500/20 animate-fade-in">
             <Icon name="ShieldCheck" size={16} className="text-green-400 flex-shrink-0" />
             <span className="text-sm text-green-300 font-medium">Пин-код установлен!</span>
+          </div>
+        )}
+
+        {/* Чёрный список */}
+        <button onClick={() => {
+          setShowBlacklist(v => !v);
+          if (!showBlacklist) {
+            setBlacklistLoading(true);
+            fetch(`${AUTH_URL}/blocked-list`, { headers: apiHeaders(token) })
+              .then(r => r.json())
+              .then(d => { if (d.blocked) setBlockedUsers(d.blocked); })
+              .catch(() => {})
+              .finally(() => setBlacklistLoading(false));
+          }
+        }}
+          className="w-full glass rounded-2xl p-4 flex items-center gap-3 hover:bg-white/5 transition-all">
+          <div className="w-10 h-10 rounded-xl bg-red-500/10 border border-red-500/15 flex items-center justify-center flex-shrink-0">
+            <Icon name="ShieldBan" size={16} className="text-red-400" />
+          </div>
+          <div className="flex-1 text-left">
+            <span className="text-sm font-medium text-foreground">Чёрный список</span>
+            {blockedUsers.length > 0 && (
+              <p className="text-[11px] text-muted-foreground mt-0.5">{blockedUsers.length} пользователей</p>
+            )}
+          </div>
+          <Icon name={showBlacklist ? "ChevronDown" : "ChevronRight"} size={16} className="text-muted-foreground" />
+        </button>
+
+        {showBlacklist && (
+          <div className="glass rounded-2xl overflow-hidden animate-fade-in">
+            {blacklistLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="w-5 h-5 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+              </div>
+            ) : blockedUsers.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
+                <Icon name="ShieldCheck" size={28} className="opacity-30" />
+                <p className="text-sm">Чёрный список пуст</p>
+              </div>
+            ) : (
+              <div>
+                {blockedUsers.map((u, i) => (
+                  <div key={u.id}
+                    className={`flex items-center gap-3 px-4 py-3 ${i < blockedUsers.length - 1 ? "border-b border-white/5" : ""}`}>
+                    <AvatarEl name={u.name} size="sm" avatarUrl={u.avatar_url} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-foreground truncate">{u.name}</p>
+                      {u.phone && <p className="text-[11px] text-muted-foreground">{u.phone}</p>}
+                    </div>
+                    <button
+                      disabled={unblockingId === u.id}
+                      onClick={async () => {
+                        setUnblockingId(u.id);
+                        try {
+                          const res = await fetch(`${AUTH_URL}/unblock`, {
+                            method: "POST", headers: apiHeaders(token),
+                            body: JSON.stringify({ user_id: u.id }),
+                          });
+                          const data = await res.json();
+                          if (data.ok) setBlockedUsers(prev => prev.filter(x => x.id !== u.id));
+                        } catch { /* ignore */ }
+                        finally { setUnblockingId(null); }
+                      }}
+                      className="px-3 py-1.5 rounded-xl text-xs font-medium bg-green-500/10 border border-green-500/20 text-green-400 hover:bg-green-500/20 transition-all disabled:opacity-50 flex items-center gap-1.5 flex-shrink-0">
+                      {unblockingId === u.id
+                        ? <div className="w-3 h-3 border border-green-400/30 border-t-green-400 rounded-full animate-spin" />
+                        : <Icon name="ShieldOff" size={12} />}
+                      Разблокировать
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
