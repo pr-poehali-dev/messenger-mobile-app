@@ -2055,7 +2055,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
 
 // ─── Chats Tab ────────────────────────────────────────────────────────────────
 
-function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: string; currentUserId: number; onMessageRead: (chatId: number) => void; onCall?: (userId: number, userName: string) => void }) {
+function ChatsTab({ token, currentUserId, onMessageRead, onCall, openChatId, onChatOpened }: { token: string; currentUserId: number; onMessageRead: (chatId: number) => void; onCall?: (userId: number, userName: string) => void; openChatId?: number | null; onChatOpened?: () => void }) {
   const [chats, setChats] = useState<Chat[]>([]);
   const [activeChat, setActiveChat] = useState<Chat | null>(null);
   const [search, setSearch] = useState("");
@@ -2088,6 +2088,25 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: stri
 
   useEffect(() => { loadChats(); }, [loadChats]);
 
+  // Открыть конкретный чат по id (из Контактов)
+  useEffect(() => {
+    if (!openChatId) return;
+    const found = chats.find(c => c.id === openChatId);
+    if (found) {
+      setActiveChat(found);
+      onChatOpened?.();
+    } else if (chats.length > 0) {
+      // Чат не найден локально — перезагружаем
+      loadChats().then(() => {
+        setChats(prev => {
+          const f = prev.find(c => c.id === openChatId);
+          if (f) { setActiveChat(f); onChatOpened?.(); }
+          return prev;
+        });
+      });
+    }
+  }, [openChatId, chats, onChatOpened, loadChats]);
+
   // Poll chats every 5s when not in a conversation
   useEffect(() => {
     if (activeChat) return;
@@ -2113,7 +2132,16 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall }: { token: stri
       body: JSON.stringify({ is_group: false, members: [userId] }),
     });
     const data = await res.json();
-    if (data.chat_id) { await loadChats(); resetCreate(); }
+    if (data.chat_id) {
+      const chatRes = await fetch(`${CHATS_URL}/chats`, { headers: apiHeaders(token) });
+      const chatData = await chatRes.json();
+      if (chatData.chats) {
+        setChats(chatData.chats);
+        const found = chatData.chats.find((c: Chat) => c.id === data.chat_id);
+        if (found) setActiveChat(found);
+      }
+      resetCreate();
+    }
   }
 
   async function createGroup() {
@@ -4396,6 +4424,7 @@ export default function App() {
   prevUnreadRef.current = prevUnreadRef.current ?? {};
   const [activeCall, setActiveCall] = useState<CallSession | null>(null);
   const [incomingCall, setIncomingCall] = useState<CallSession | null>(null);
+  const [pendingOpenChatId, setPendingOpenChatId] = useState<number | null>(null);
 
   useEffect(() => {
     if (!token) { setAuthChecked(true); return; }
@@ -4543,7 +4572,12 @@ export default function App() {
       body: JSON.stringify({ is_group: false, members: [userId] }),
     }).catch(() => null);
     const data = await res?.json().catch(() => null);
-    if (data?.chat_id) setTab("chats");
+    if (data?.chat_id) {
+      setPendingOpenChatId(data.chat_id);
+      setTab("chats");
+      // Небольшой delay чтобы ChatsTab успел подгрузить чаты
+      setTimeout(() => setPendingOpenChatId(data.chat_id), 300);
+    }
   }
 
   async function startCall(calleeId: number, calleeName: string) {
@@ -4605,8 +4639,10 @@ export default function App() {
 
   if (!token || !user) {
     return (
-      <div className="flex flex-col h-[100dvh] max-w-md mx-auto overflow-hidden" style={{ background: "hsl(var(--background))" }}>
-        <AuthScreen onAuth={handleAuth} />
+      <div className="flex items-center justify-center h-[100dvh]" style={{ background: "hsl(var(--background))" }}>
+        <div className="w-full max-w-md h-full flex flex-col overflow-hidden">
+          <AuthScreen onAuth={handleAuth} />
+        </div>
       </div>
     );
   }
@@ -4629,7 +4665,7 @@ export default function App() {
   }
 
   const tabs: Record<Tab, React.ReactNode> = {
-    chats: <ChatsTab token={token} currentUserId={user.id} onCall={startCall} onMessageRead={(chatId: number) => {
+    chats: <ChatsTab token={token} currentUserId={user.id} onCall={startCall} openChatId={pendingOpenChatId} onChatOpened={() => setPendingOpenChatId(null)} onMessageRead={(chatId: number) => {
       setChatsForBadge(prev => prev.map(c =>
         c.id === chatId ? { ...c, unread: Math.max(0, c.unread - 1) } : c
       ));
@@ -4641,17 +4677,93 @@ export default function App() {
     settings: <SettingsTab onLogout={handleLogout} onTestSound={playSound} />,
   };
 
+  const NAV_ITEMS_DESKTOP = [
+    { tab: "chats" as Tab, icon: "MessageCircle", label: "Чаты" },
+    { tab: "contacts" as Tab, icon: "Users", label: "Контакты" },
+    { tab: "calls" as Tab, icon: "Phone", label: "Звонки" },
+    { tab: "status" as Tab, icon: "Circle", label: "Статус" },
+    { tab: "profile" as Tab, icon: "User", label: "Профиль" },
+    { tab: "settings" as Tab, icon: "Settings", label: "Настройки" },
+  ];
+
   return (
-    <div className="flex flex-col h-[100dvh] max-w-md mx-auto font-rubik overflow-hidden relative"
+    <div className="flex h-[100dvh] font-rubik overflow-hidden relative"
       style={{ background: "hsl(var(--background))" }}>
-      <div className="fixed inset-0 max-w-md mx-auto pointer-events-none overflow-hidden">
+
+      {/* Декоративный фон */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden">
         <div className="absolute -top-20 -right-20 w-64 h-64 rounded-full opacity-[0.04]"
           style={{ background: "radial-gradient(circle, #0077b6, transparent)" }} />
         <div className="absolute -bottom-20 -left-20 w-64 h-64 rounded-full opacity-[0.04]"
           style={{ background: "radial-gradient(circle, #22d3ee, transparent)" }} />
       </div>
-      <div className="flex-1 overflow-hidden relative z-10">{tabs[tab]}</div>
-      <BottomNav active={tab} onChange={setTab} unreadCount={unreadCount} />
+
+      {/* ── МОБИЛЬНЫЙ режим (< md) ── */}
+      <div className="flex flex-col flex-1 overflow-hidden md:hidden">
+        <div className="flex-1 overflow-hidden relative z-10">{tabs[tab]}</div>
+        <BottomNav active={tab} onChange={setTab} unreadCount={unreadCount} />
+      </div>
+
+      {/* ── ДЕСКТОПНЫЙ режим (≥ md) ── */}
+      <div className="hidden md:flex flex-1 overflow-hidden relative z-10">
+        {/* Sidebar */}
+        <div className="flex flex-col w-[72px] border-r border-white/5 flex-shrink-0"
+          style={{ background: "hsl(var(--background))" }}>
+          <div className="flex items-center justify-center h-16 border-b border-white/5 flex-shrink-0">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-600 to-cyan-500 flex items-center justify-center shadow-[0_0_20px_rgba(0,119,182,0.4)]">
+              <span className="text-white font-golos font-black text-sm">К</span>
+            </div>
+          </div>
+          <nav className="flex flex-col items-center gap-1 py-3 flex-1">
+            {NAV_ITEMS_DESKTOP.map(({ tab: t, icon, label }) => (
+              <button key={t} onClick={() => setTab(t)}
+                title={label}
+                className={`relative w-12 h-12 rounded-2xl flex items-center justify-center transition-all
+                  ${tab === t
+                    ? "bg-gradient-to-br from-blue-600 to-blue-700 shadow-[0_0_16px_rgba(0,119,182,0.5)]"
+                    : "hover:bg-white/8 text-muted-foreground hover:text-foreground"}`}>
+                <Icon name={icon} size={20} className={tab === t ? "text-white" : ""} />
+                {t === "chats" && unreadCount > 0 && tab !== "chats" && (
+                  <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">
+                    {unreadCount > 99 ? "99+" : unreadCount}
+                  </span>
+                )}
+              </button>
+            ))}
+          </nav>
+          {/* Аватар внизу */}
+          <div className="flex items-center justify-center pb-4 flex-shrink-0">
+            <button onClick={() => setTab("profile")} title={user.name}
+              className="w-10 h-10 rounded-full overflow-hidden ring-2 ring-white/10 hover:ring-sky-500/50 transition-all">
+              {user.avatar_url
+                ? <img src={user.avatar_url} className="w-full h-full object-cover" alt={user.name} />
+                : <div className="w-full h-full bg-gradient-to-br from-blue-600 to-blue-700 flex items-center justify-center text-white font-bold text-sm font-golos">
+                    {user.name[0]}
+                  </div>}
+            </button>
+          </div>
+        </div>
+
+        {/* Контент */}
+        <div className="flex-1 overflow-hidden max-w-2xl">
+          {tabs[tab]}
+        </div>
+
+        {/* Правая декоративная панель на очень широких экранах */}
+        <div className="hidden xl:flex flex-1 items-center justify-center border-l border-white/5"
+          style={{ background: "hsl(220 55% 6%)" }}>
+          <div className="flex flex-col items-center gap-4 text-center px-8">
+            <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-blue-600/20 to-cyan-500/10 border border-white/5 flex items-center justify-center">
+              <Icon name="MessageCircle" size={36} className="text-blue-400/50" />
+            </div>
+            <p className="text-muted-foreground/50 text-sm leading-relaxed max-w-xs">
+              Выберите чат слева, чтобы начать общение
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Всплывающие элементы (звонки, баннеры) */}
       {incomingCall && !activeCall && (
         <IncomingCallBanner
           session={incomingCall}
@@ -4663,9 +4775,9 @@ export default function App() {
         <CallScreen session={activeCall} token={token} onEnd={() => setActiveCall(null)} />
       )}
       {showInstallBanner && installPrompt && (
-        <div className="fixed top-0 left-0 right-0 z-50 flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-blue-700 to-blue-600 text-white text-sm shadow-lg max-w-md mx-auto animate-fade-in">
+        <div className="fixed top-0 left-0 right-0 z-50 flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-blue-700 to-blue-600 text-white text-sm shadow-lg animate-fade-in">
           <Icon name="Download" size={18} className="flex-shrink-0" />
-          <span className="flex-1 font-medium">Установить приложение на телефон</span>
+          <span className="flex-1 font-medium">Установить приложение</span>
           <button onClick={() => {
             (installPrompt as { prompt: () => void }).prompt();
             setShowInstallBanner(false);
