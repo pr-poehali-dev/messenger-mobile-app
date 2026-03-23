@@ -635,6 +635,7 @@ def handler(event: dict, context) -> dict:
             file_b64 = body.get("file") or body.get("file_data")
             file_name = (body.get("file_name") or "file").strip()[:255]
             file_type = (body.get("file_type") or "application/octet-stream").strip()[:100]
+            print(f"[UPLOAD] file_type={file_type!r} file_name={file_name!r} b64_len={len(file_b64) if file_b64 else 0} keys={list(body.keys())}")
 
             if not file_b64:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "file required"})}

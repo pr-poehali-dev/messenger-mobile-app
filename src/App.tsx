@@ -1288,43 +1288,90 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     } catch { /* keep optimistic */ }
   }
 
+  async function compressImage(file: File, maxSizePx = 1280, quality = 0.82): Promise<{ b64: string; type: string; size: number }> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        let { width, height } = img;
+        if (width > maxSizePx || height > maxSizePx) {
+          if (width > height) { height = Math.round(height * maxSizePx / width); width = maxSizePx; }
+          else { width = Math.round(width * maxSizePx / height); height = maxSizePx; }
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width; canvas.height = height;
+        const ctx = canvas.getContext("2d")!;
+        ctx.drawImage(img, 0, 0, width, height);
+        const outType = file.type === "image/png" ? "image/png" : "image/jpeg";
+        canvas.toBlob(blob => {
+          if (!blob) { reject(new Error("Ошибка сжатия")); return; }
+          const reader = new FileReader();
+          reader.onload = () => {
+            const result = reader.result as string;
+            resolve({ b64: result.split(",")[1], type: outType, size: blob.size });
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        }, outType, quality);
+      };
+      img.onerror = reject;
+      img.src = url;
+    });
+  }
+
   async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = "";
     setUploadError(null);
+    console.log("[upload] selected:", file.name, file.type, file.size);
 
-    if (file.size > 25 * 1024 * 1024) {
-      setUploadError("Файл слишком большой. Максимум 25 МБ");
+    if (file.size > 20 * 1024 * 1024) {
+      setUploadError("Файл слишком большой. Максимум 20 МБ");
       return;
     }
 
     setUploading(true);
-    setUploadError(null);
     try {
-      const b64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const result = reader.result as string;
-          const base64 = result.includes(",") ? result.split(",")[1] : result;
-          resolve(base64);
-        };
-        reader.onerror = () => reject(new Error("Не удалось прочитать файл"));
-        reader.readAsDataURL(file);
-      });
+      let b64: string;
+      let fileType = file.type || "application/octet-stream";
+      let fileSize = file.size;
 
-      const fileType = file.type || "application/octet-stream";
+      if (file.type.startsWith("image/") && file.size > 300 * 1024) {
+        // Сжимаем картинки
+        const compressed = await compressImage(file);
+        b64 = compressed.b64;
+        fileType = compressed.type;
+        fileSize = compressed.size;
+      } else {
+        // Для остальных файлов — просто читаем
+        b64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const result = reader.result as string;
+            resolve(result.includes(",") ? result.split(",")[1] : result);
+          };
+          reader.onerror = () => reject(new Error("Не удалось прочитать файл"));
+          reader.readAsDataURL(file);
+        });
+      }
+
+      console.log("[upload] b64 length:", b64.length, "type:", fileType);
       const res = await fetch(CHATS_URL, {
         method: "POST", headers: apiHeaders(token),
         body: JSON.stringify({ action: "upload", file: b64, file_name: file.name, file_type: fileType }),
       });
+      console.log("[upload] response status:", res.status);
       const data = await res.json();
+      console.log("[upload] response data:", JSON.stringify(data).slice(0, 200));
       if (data.file_url) {
-        setPendingFile({ url: data.file_url, name: data.file_name ?? file.name, size: data.file_size ?? file.size, type: data.file_type ?? fileType });
+        setPendingFile({ url: data.file_url, name: data.file_name ?? file.name, size: data.file_size ?? fileSize, type: data.file_type ?? fileType });
       } else {
         setUploadError(data.error || "Не удалось загрузить файл");
       }
     } catch (e) {
+      console.error("[upload] error:", e);
       setUploadError(e instanceof Error ? e.message : "Ошибка при загрузке файла");
     } finally {
       setUploading(false);
@@ -1440,14 +1487,18 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
       const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
         ? "audio/webm;codecs=opus"
         : MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "";
-      const mr = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      const mrOptions: MediaRecorderOptions = mimeType ? { mimeType, audioBitsPerSecond: 32000 } : { audioBitsPerSecond: 32000 };
+      const mr = new MediaRecorder(stream, mrOptions);
       audioChunksRef.current = [];
       mr.ondataavailable = e => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
       mr.start(100);
       mediaRecorderRef.current = mr;
       setIsRecording(true);
       setRecordingTime(0);
-      recordingTimerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000);
+      recordingTimerRef.current = setInterval(() => setRecordingTime(t => {
+        if (t >= 119) { stopRecording(); return t; }
+        return t + 1;
+      }), 1000);
 
       // Визуализация волны через AnalyserNode
       try {
