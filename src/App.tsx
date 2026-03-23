@@ -144,6 +144,7 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User, isNew?: bo
   const [resendTimer, setResendTimer] = useState(0);
   const [devCode, setDevCode] = useState(""); // только при отсутствии SMTP/SMS
   const [contactType, setContactType] = useState<"phone" | "email">("phone");
+  const [showPolicy, setShowPolicy] = useState(false);
 
   const otpRefs = [
     useRef<HTMLInputElement>(null),
@@ -397,8 +398,131 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User, isNew?: bo
         )}
 
         <p className="text-center text-xs text-muted-foreground mt-5 animate-fade-in" style={{ animationDelay: "0.2s" }}>
-          Продолжая, вы соглашаетесь с условиями использования
+          Продолжая, вы соглашаетесь с{" "}
+          <button onClick={() => setShowPolicy(true)}
+            className="text-sky-400 hover:text-sky-300 underline underline-offset-2 transition-colors">
+            политикой конфиденциальности
+          </button>
         </p>
+
+        {/* Модалка с политикой конфиденциальности */}
+        {showPolicy && (
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fade-in"
+            onClick={() => setShowPolicy(false)}>
+            <div className="w-full max-w-lg bg-[hsl(var(--background))] border border-white/10 rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[85vh] flex flex-col"
+              onClick={e => e.stopPropagation()}>
+              {/* Шапка */}
+              <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-white/8 flex-shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-blue-500/15 flex items-center justify-center">
+                    <Icon name="Shield" size={16} className="text-blue-400" />
+                  </div>
+                  <div>
+                    <h2 className="font-golos font-bold text-foreground text-base">Политика конфиденциальности</h2>
+                    <p className="text-[11px] text-muted-foreground">Версия 1.0 · 23 марта 2026</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowPolicy(false)}
+                  className="p-2 rounded-full hover:bg-white/10 transition-colors text-muted-foreground">
+                  <Icon name="X" size={18} />
+                </button>
+              </div>
+
+              {/* Контент */}
+              <div className="overflow-y-auto flex-1 px-5 py-4 space-y-5 scroll-container">
+
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  Настоящая Политика описывает, какие данные собирает мессенджер <strong className="text-foreground">Каспер</strong>, как они используются и защищаются.
+                </p>
+
+                {[
+                  {
+                    num: "1", color: "sky", title: "Данные, которые мы собираем",
+                    items: [
+                      "Номер телефона или email для регистрации и входа.",
+                      "Имя, аватар и биография — только то, что вы добавляете сами.",
+                      "Сообщения, файлы, голосовые — только в рамках вашей переписки.",
+                      "Время последней активности для отображения статуса «онлайн».",
+                    ],
+                  },
+                  {
+                    num: "2", color: "green", title: "Как мы используем данные",
+                    items: [
+                      "Обеспечение работы мессенджера: отправка сообщений, звонки.",
+                      "Авторизация через одноразовые OTP-коды.",
+                      "Защита от спама и несанкционированного доступа.",
+                      "Системные push-уведомления о новых сообщениях.",
+                    ],
+                  },
+                  {
+                    num: "3", color: "purple", title: "Защита данных",
+                    items: [
+                      "Все данные передаются по зашифрованному протоколу HTTPS/TLS.",
+                      "Пароли хранятся в виде хешей, не в открытом виде.",
+                      "Сессионные токены обновляются при каждом входе.",
+                    ],
+                  },
+                  {
+                    num: "4", color: "orange", title: "Передача третьим лицам",
+                    items: [
+                      "Мы не продаём и не передаём ваши данные рекламным сетям.",
+                      "Без аналитики третьих лиц. Без отслеживания.",
+                      "Данные раскрываются только по законному требованию госорганов.",
+                    ],
+                  },
+                  {
+                    num: "5", color: "cyan", title: "Ваши права",
+                    items: [
+                      "Изменить имя, аватар и биографию в разделе «Профиль».",
+                      "Удалить аккаунт и все данные через раздел «Профиль».",
+                      "Запросить экспорт данных через службу поддержки.",
+                    ],
+                  },
+                ].map(section => {
+                  const colorMap: Record<string, { bg: string; text: string; dot: string }> = {
+                    sky:    { bg: "bg-sky-500/15",    text: "text-sky-400",    dot: "bg-sky-500/20" },
+                    green:  { bg: "bg-green-500/15",  text: "text-green-400",  dot: "bg-green-500/20" },
+                    purple: { bg: "bg-purple-500/15", text: "text-purple-400", dot: "bg-purple-500/20" },
+                    orange: { bg: "bg-orange-500/15", text: "text-orange-400", dot: "bg-orange-500/20" },
+                    cyan:   { bg: "bg-cyan-500/15",   text: "text-cyan-400",   dot: "bg-cyan-500/20" },
+                  };
+                  const c = colorMap[section.color];
+                  return (
+                    <div key={section.num} className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className={`w-5 h-5 rounded-full ${c.dot} ${c.text} text-[11px] font-bold flex items-center justify-center flex-shrink-0`}>
+                          {section.num}
+                        </span>
+                        <h3 className="text-sm font-golos font-bold text-foreground">{section.title}</h3>
+                      </div>
+                      <ul className="space-y-1.5 pl-1">
+                        {section.items.map(item => (
+                          <li key={item} className="flex items-start gap-2">
+                            <span className={`w-1 h-1 rounded-full ${c.bg} mt-2 flex-shrink-0`}
+                              style={{ minWidth: 4, minHeight: 4, background: "currentColor", opacity: 0.7 }} />
+                            <span className="text-xs text-muted-foreground leading-relaxed">{item}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })}
+
+                <div className="text-center text-[11px] text-muted-foreground/50 pt-2 pb-1">
+                  Каспер · Политика конфиденциальности · v1.0
+                </div>
+              </div>
+
+              {/* Кнопка закрыть */}
+              <div className="px-5 pb-5 pt-3 flex-shrink-0 border-t border-white/8">
+                <button onClick={() => setShowPolicy(false)}
+                  className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-blue-600 to-blue-700 text-white font-golos font-semibold text-sm hover:opacity-90 transition-all shadow-[0_0_20px_rgba(0,119,182,0.3)]">
+                  Понятно
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
