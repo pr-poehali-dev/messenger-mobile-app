@@ -620,6 +620,59 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"reactions": reactions, "toggled": toggled})}
 
         # upload — загрузить файл в S3
+        # presigned-url — получить URL для прямой загрузки файла в S3
+        if action == "presigned-url":
+            body = body_pre
+            file_name = (body.get("file_name") or "file").strip()[:255]
+            file_type = (body.get("file_type") or "application/octet-stream").strip()[:100]
+            file_size = int(body.get("file_size") or 0)
+
+            ALLOWED_MIME = {
+                "image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif",
+                "image/webp": ".webp", "image/heic": ".heic", "image/jpg": ".jpg",
+                "video/mp4": ".mp4", "video/webm": ".webm", "video/quicktime": ".mov",
+                "video/x-msvideo": ".avi",
+                "audio/webm": ".webm", "audio/ogg": ".ogg", "audio/mpeg": ".mp3",
+                "audio/mp4": ".m4a", "audio/wav": ".wav", "audio/aac": ".aac",
+                "application/pdf": ".pdf",
+                "application/zip": ".zip", "application/x-zip-compressed": ".zip",
+                "application/msword": ".doc",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+                "application/vnd.ms-excel": ".xls",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+                "text/plain": ".txt",
+            }
+            file_type_base = file_type.split(";")[0].strip()
+            resolved_type = file_type if file_type in ALLOWED_MIME else file_type_base
+            if resolved_type not in ALLOWED_MIME:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Тип файла не разрешён"})}
+            if file_size > 50 * 1024 * 1024:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Файл слишком большой (макс. 50 МБ)"})}
+
+            ext = ALLOWED_MIME[resolved_type]
+            key = f"chat-files/{uuid.uuid4().hex}{ext}"
+
+            s3 = boto3.client(
+                "s3",
+                endpoint_url="https://bucket.poehali.dev",
+                aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+                aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+            )
+            upload_url = s3.generate_presigned_url(
+                "put_object",
+                Params={"Bucket": "files", "Key": key, "ContentType": resolved_type},
+                ExpiresIn=300,
+            )
+            cdn_url = f"https://cdn.poehali.dev/projects/{os.environ['AWS_ACCESS_KEY_ID']}/bucket/{key}"
+            import re as _re
+            safe_display = _re.sub(r'[^\w.\-\s]', '_', file_name)[:100] or "file"
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({
+                "upload_url": upload_url,
+                "file_url": cdn_url,
+                "file_name": safe_display,
+                "file_type": resolved_type,
+            })}
+
         if action == "upload":
             # ── Rate limit: не более 20 загрузок в час ──
             with conn.cursor() as cur:

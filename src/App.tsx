@@ -1288,36 +1288,25 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     } catch { /* keep optimistic */ }
   }
 
-  async function compressImage(file: File, maxSizePx = 1280, quality = 0.82): Promise<{ b64: string; type: string; size: number }> {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      const url = URL.createObjectURL(file);
-      img.onload = () => {
-        URL.revokeObjectURL(url);
-        let { width, height } = img;
-        if (width > maxSizePx || height > maxSizePx) {
-          if (width > height) { height = Math.round(height * maxSizePx / width); width = maxSizePx; }
-          else { width = Math.round(width * maxSizePx / height); height = maxSizePx; }
-        }
-        const canvas = document.createElement("canvas");
-        canvas.width = width; canvas.height = height;
-        const ctx = canvas.getContext("2d")!;
-        ctx.drawImage(img, 0, 0, width, height);
-        const outType = file.type === "image/png" ? "image/png" : "image/jpeg";
-        canvas.toBlob(blob => {
-          if (!blob) { reject(new Error("Ошибка сжатия")); return; }
-          const reader = new FileReader();
-          reader.onload = () => {
-            const result = reader.result as string;
-            resolve({ b64: result.split(",")[1], type: outType, size: blob.size });
-          };
-          reader.onerror = reject;
-          reader.readAsDataURL(blob);
-        }, outType, quality);
-      };
-      img.onerror = reject;
-      img.src = url;
+  async function uploadFileDirect(file: File): Promise<{ file_url: string; file_name: string; file_type: string; file_size: number }> {
+    const fileType = file.type || "application/octet-stream";
+    // 1. Получаем presigned URL от бэкенда
+    const res = await fetch(CHATS_URL, {
+      method: "POST", headers: apiHeaders(token),
+      body: JSON.stringify({ action: "presigned-url", file_name: file.name, file_type: fileType, file_size: file.size }),
     });
+    const data = await res.json();
+    if (!data.upload_url) throw new Error(data.error || "Не удалось получить URL загрузки");
+
+    // 2. Загружаем файл напрямую в S3
+    const uploadRes = await fetch(data.upload_url, {
+      method: "PUT",
+      headers: { "Content-Type": data.file_type || fileType },
+      body: file,
+    });
+    if (!uploadRes.ok) throw new Error(`Ошибка загрузки: ${uploadRes.status}`);
+
+    return { file_url: data.file_url, file_name: data.file_name || file.name, file_type: data.file_type || fileType, file_size: file.size };
   }
 
   async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
@@ -1325,53 +1314,17 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     if (!file) return;
     e.target.value = "";
     setUploadError(null);
-    console.log("[upload] selected:", file.name, file.type, file.size);
 
-    if (file.size > 20 * 1024 * 1024) {
-      setUploadError("Файл слишком большой. Максимум 20 МБ");
+    if (file.size > 50 * 1024 * 1024) {
+      setUploadError("Файл слишком большой. Максимум 50 МБ");
       return;
     }
 
     setUploading(true);
     try {
-      let b64: string;
-      let fileType = file.type || "application/octet-stream";
-      let fileSize = file.size;
-
-      if (file.type.startsWith("image/") && file.size > 300 * 1024) {
-        // Сжимаем картинки
-        const compressed = await compressImage(file);
-        b64 = compressed.b64;
-        fileType = compressed.type;
-        fileSize = compressed.size;
-      } else {
-        // Для остальных файлов — просто читаем
-        b64 = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => {
-            const result = reader.result as string;
-            resolve(result.includes(",") ? result.split(",")[1] : result);
-          };
-          reader.onerror = () => reject(new Error("Не удалось прочитать файл"));
-          reader.readAsDataURL(file);
-        });
-      }
-
-      console.log("[upload] b64 length:", b64.length, "type:", fileType);
-      const res = await fetch(CHATS_URL, {
-        method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ action: "upload", file: b64, file_name: file.name, file_type: fileType }),
-      });
-      console.log("[upload] response status:", res.status);
-      const data = await res.json();
-      console.log("[upload] response data:", JSON.stringify(data).slice(0, 200));
-      if (data.file_url) {
-        setPendingFile({ url: data.file_url, name: data.file_name ?? file.name, size: data.file_size ?? fileSize, type: data.file_type ?? fileType });
-      } else {
-        setUploadError(data.error || "Не удалось загрузить файл");
-      }
+      const result = await uploadFileDirect(file);
+      setPendingFile({ url: result.file_url, name: result.file_name, size: result.file_size, type: result.file_type });
     } catch (e) {
-      console.error("[upload] error:", e);
       setUploadError(e instanceof Error ? e.message : "Ошибка при загрузке файла");
     } finally {
       setUploading(false);
@@ -1584,24 +1537,13 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     };
     setMessages(prev => [...prev, optimistic]);
     try {
-      const reader = new FileReader();
-      reader.readAsDataURL(blob);
-      const dataUrl = await new Promise<string>((res, rej) => {
-        reader.onload = () => res(reader.result as string);
-        reader.onerror = rej;
-      });
-      const base64 = dataUrl.split(",")[1];
       const normalizedMime = mimeType.split(";")[0].trim() || "audio/webm";
-      const upRes = await fetch(CHATS_URL, {
-        method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ action: "upload", file: base64, file_name: `voice_${Date.now()}.${ext}`, file_type: normalizedMime }),
-      });
-      const upData = await upRes.json();
-      if (!upData.file_url && !upData.url) throw new Error(upData.error || "Ошибка загрузки голосового");
+      const voiceFile = new File([blob], `voice_${Date.now()}.${ext}`, { type: normalizedMime });
+      const upData = await uploadFileDirect(voiceFile);
 
       const sendRes = await fetch(CHATS_URL, {
         method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ action: "send", chat_id: chat.id, text: "", file_url: upData.file_url || upData.url, file_name: optimistic.file_name, file_size: blob.size, file_type: normalizedMime }),
+        body: JSON.stringify({ action: "send", chat_id: chat.id, text: "", file_url: upData.file_url, file_name: optimistic.file_name, file_size: blob.size, file_type: normalizedMime }),
       });
       const sendData = await sendRes.json();
       if (sendData.message) {
