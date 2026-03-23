@@ -144,8 +144,9 @@ def generate_code() -> str:
 def handler(event: dict, context) -> dict:
     cors = {
         "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, X-Auth-Token",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, X-Auth-Token, Authorization, X-Requested-With",
+        "Access-Control-Max-Age": "86400",
     }
 
     if event.get("httpMethod") == "OPTIONS":

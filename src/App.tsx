@@ -179,15 +179,22 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User, isNew?: bo
     setLoading(true);
     try {
       const res = await fetch(`${AUTH_URL}/send-code`, {
-        method: "POST", headers: apiHeaders(),
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ contact: c, purpose: mode }),
+        mode: "cors",
+        credentials: "omit",
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error || "Ошибка"); return; }
       if (data.dev_code) setDevCode(data.dev_code);
       setStep("otp");
       setResendTimer(60);
-    } catch (e) { console.error("sendCode error:", e); setError(`Ошибка: ${e instanceof Error ? e.message : String(e)}`); }
+    } catch (e) {
+      console.error("sendCode error:", e);
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(`Ошибка соединения: ${msg}. Попробуйте отключить защиту браузера или VPN.`);
+    }
     finally { setLoading(false); }
   }
 
