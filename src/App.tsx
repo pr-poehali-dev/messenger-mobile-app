@@ -300,9 +300,9 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User, isNew?: bo
                   onChange={e => setContact(e.target.value)}
                   onKeyDown={e => e.key === "Enter" && sendCode()}
                   placeholder="Телефон или Email"
-                  type={contactType === "email" ? "email" : "tel"}
+                  type="text"
                   autoComplete={contactType === "email" ? "email" : "tel"}
-                  inputMode={contactType === "email" ? "email" : "tel"}
+                  inputMode="email"
                   className={inputClass} />
               </div>
 
