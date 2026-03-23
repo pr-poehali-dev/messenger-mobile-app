@@ -147,6 +147,9 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User, isNew?: bo
   const [showPolicy, setShowPolicy] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<Event | null>(null);
+  const [showIosHint, setShowIosHint] = useState(false);
+  const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const isInStandaloneMode = window.matchMedia("(display-mode: standalone)").matches;
 
   useEffect(() => {
     const handler = (e: Event) => { e.preventDefault(); setInstallPrompt(e); };
@@ -274,6 +277,32 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User, isNew?: bo
                 className="w-full py-3.5 rounded-2xl border border-sky-500/30 bg-sky-500/10 text-sky-300 font-semibold text-sm hover:bg-sky-500/20 active:scale-[0.98] transition-all flex items-center justify-center gap-2">
                 <Icon name="Download" size={16} />Установить приложение на телефон
               </button>
+            )}
+
+            {isIos && !isInStandaloneMode && !installPrompt && (
+              <>
+                <button onClick={() => setShowIosHint(v => !v)}
+                  className="w-full py-3.5 rounded-2xl border border-sky-500/30 bg-sky-500/10 text-sky-300 font-semibold text-sm hover:bg-sky-500/20 active:scale-[0.98] transition-all flex items-center justify-center gap-2">
+                  <Icon name="Download" size={16} />Установить приложение на iPhone
+                </button>
+                {showIosHint && (
+                  <div className="rounded-2xl border border-white/10 bg-secondary/60 p-4 space-y-2 animate-fade-in text-sm text-muted-foreground">
+                    <p className="font-semibold text-foreground">Как установить на iPhone:</p>
+                    <div className="flex items-start gap-2">
+                      <span className="text-sky-400 font-bold flex-shrink-0">1.</span>
+                      <span>Нажмите кнопку <span className="inline-flex items-center gap-1 text-sky-400">поделиться <Icon name="Share" size={13} /></span> внизу Safari</span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="text-sky-400 font-bold flex-shrink-0">2.</span>
+                      <span>Выберите <span className="text-foreground font-medium">"На экран «Домой»"</span></span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="text-sky-400 font-bold flex-shrink-0">3.</span>
+                      <span>Нажмите <span className="text-foreground font-medium">"Добавить"</span></span>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </div>
         </>
