@@ -379,7 +379,7 @@ def handler(event: dict, context) -> dict:
                     "body": json.dumps({"token": token_val, "user": {"id": user_id, "name": name, "phone": ph, "bio": bio or "", "status": "online", "avatar_url": avatar_url}})}
 
         # GET /me
-        if method == "GET" and action == "me":
+        if action == "me":
             if not token:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
             user = get_user_by_token(conn, token)
@@ -469,7 +469,7 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
 
         # GET /contacts
-        if method == "GET" and action == "contacts":
+        if action == "contacts":
             if not token:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
             user = get_user_by_token(conn, token)
@@ -609,7 +609,7 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True, "blocked": False})}
 
         # GET /blocked-list — список заблокированных
-        if method == "GET" and (action == "blocked-list" or "blocked-list" in path):
+        if action == "blocked-list" or "blocked-list" in path:
             if not token:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
             user = get_user_by_token(conn, token)
@@ -629,7 +629,7 @@ def handler(event: dict, context) -> dict:
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"blocked": blocked})}
 
         # GET /block-status?user_id=X — проверить статус блокировки
-        if method == "GET" and (action == "block-status" or "block-status" in path):
+        if action == "block-status" or "block-status" in path:
             if not token:
                 return {"statusCode": 401, "headers": cors, "body": json.dumps({"error": "Не авторизован"})}
             user = get_user_by_token(conn, token)
