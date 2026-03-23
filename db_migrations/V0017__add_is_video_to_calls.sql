@@ -1,0 +1,2 @@
+ALTER TABLE t_p22534578_messenger_mobile_app.calls
+  ADD COLUMN IF NOT EXISTS is_video BOOLEAN NOT NULL DEFAULT FALSE;

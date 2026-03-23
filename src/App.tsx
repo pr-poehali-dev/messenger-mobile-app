@@ -81,8 +81,10 @@ interface CallSession {
   callId: number;
   peerId: number;
   peerName: string;
+  peerAvatar?: string | null;
   direction: "outgoing" | "incoming";
   status: "ringing" | "active" | "ended";
+  isVideo?: boolean;
 }
 
 // ─── Mock data for non-chat tabs ──────────────────────────────────────────────
@@ -445,7 +447,7 @@ function BottomNav({ active, onChange, unreadCount }: {
 // ─── Chat Screen ──────────────────────────────────────────────────────────────
 
 function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRead, initialMsgId, onCall, onChatUpdate }: {
-  chat: Chat; token: string; currentUserId: number; onBack: () => void; allChats: Chat[]; onMessageRead?: () => void; initialMsgId?: number; onCall?: (userId: number, userName: string) => void; onChatUpdate?: (updated: Partial<Chat>) => void;
+  chat: Chat; token: string; currentUserId: number; onBack: () => void; allChats: Chat[]; onMessageRead?: () => void; initialMsgId?: number; onCall?: (userId: number, userName: string, isVideo?: boolean) => void; onChatUpdate?: (updated: Partial<Chat>) => void;
 }) {
   const [text, setText] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -1227,9 +1229,14 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
             <Icon name="ChartBar" size={18} />
           </button>
           {!chat.is_group && onCall && chat.peer_id && (
-            <button onClick={() => onCall(chat.peer_id!, chat.name)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
-              <Icon name="Phone" size={18} className="text-cyan-400" />
-            </button>
+            <>
+              <button onClick={() => onCall(chat.peer_id!, chat.name, false)} className="p-2 hover:bg-white/10 rounded-full transition-colors" title="Аудиозвонок">
+                <Icon name="Phone" size={18} className="text-cyan-400" />
+              </button>
+              <button onClick={() => onCall(chat.peer_id!, chat.name, true)} className="p-2 hover:bg-white/10 rounded-full transition-colors" title="Видеозвонок">
+                <Icon name="Video" size={18} className="text-cyan-400" />
+              </button>
+            </>
           )}
         </div>
 
@@ -2055,7 +2062,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
 
 // ─── Chats Tab ────────────────────────────────────────────────────────────────
 
-function ChatsTab({ token, currentUserId, onMessageRead, onCall, openChatId, onChatOpened }: { token: string; currentUserId: number; onMessageRead: (chatId: number) => void; onCall?: (userId: number, userName: string) => void; openChatId?: number | null; onChatOpened?: () => void }) {
+function ChatsTab({ token, currentUserId, onMessageRead, onCall, openChatId, onChatOpened }: { token: string; currentUserId: number; onMessageRead: (chatId: number) => void; onCall?: (userId: number, userName: string, isVideo?: boolean) => void; openChatId?: number | null; onChatOpened?: () => void }) {
   const [chats, setChats] = useState<Chat[]>([]);
   const [activeChat, setActiveChat] = useState<Chat | null>(null);
   const [search, setSearch] = useState("");
@@ -3054,21 +3061,29 @@ function ProfileTab({ user, token, onLogout, onUserUpdate, onDeleteAccount }: {
 function CallScreen({ session, token, onEnd }: { session: CallSession; token: string; onEnd: () => void }) {
   const [elapsed, setElapsed] = useState(0);
   const [muted, setMuted] = useState(false);
-  const [callStatus, setCallStatus] = useState<"ringing"|"active">(session.status === "active" ? "active" : "ringing");
+  const [videoOff, setVideoOff] = useState(false);
+  const [speaker, setSpeaker] = useState(true);
+  const [callStatus, setCallStatus] = useState<"ringing" | "active">(session.status === "active" ? "active" : "ringing");
+  const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
+  const [noMic, setNoMic] = useState(false);
+
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const lastSignalIdRef = useRef(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const endedRef = useRef(false);
   const pendingCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
   const remoteDescSetRef = useRef(false);
-  const callStatusRef = useRef<"ringing"|"active">(session.status === "active" ? "active" : "ringing");
+  const callStatusRef = useRef<"ringing" | "active">(session.status === "active" ? "active" : "ringing");
 
   const ICE_SERVERS = [
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
     { urls: "stun:stun2.l.google.com:19302" },
+    { urls: "stun:stun.cloudflare.com:3478" },
   ];
 
   async function sendSignal(type: string, payload: unknown) {
@@ -3099,22 +3114,43 @@ function CallScreen({ session, token, onEnd }: { session: CallSession; token: st
 
   useEffect(() => {
     async function init() {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false }).catch(() => null);
-      if (!stream) { endCall(); return; }
+      const constraints = session.isVideo
+        ? { audio: true, video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } } }
+        : { audio: true, video: false };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints).catch(async () => {
+        // Fallback: только аудио если нет видео
+        if (session.isVideo) return navigator.mediaDevices.getUserMedia({ audio: true, video: false }).catch(() => null);
+        return null;
+      });
+
+      if (!stream) { setNoMic(true); return; }
       localStreamRef.current = stream;
+
+      if (session.isVideo && localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
+        localVideoRef.current.play().catch(() => {});
+      }
 
       const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS, iceCandidatePoolSize: 10 });
       pcRef.current = pc;
       stream.getTracks().forEach(t => pc.addTrack(t, stream));
 
-      if (!remoteAudioRef.current) {
-        remoteAudioRef.current = document.createElement("audio");
-        remoteAudioRef.current.autoplay = true;
-        document.body.appendChild(remoteAudioRef.current);
+      // Аудио для голосового звонка
+      if (!session.isVideo) {
+        if (!remoteAudioRef.current) {
+          remoteAudioRef.current = document.createElement("audio");
+          remoteAudioRef.current.autoplay = true;
+          document.body.appendChild(remoteAudioRef.current);
+        }
       }
 
       pc.ontrack = (e) => {
-        if (remoteAudioRef.current && e.streams[0]) {
+        if (!e.streams[0]) return;
+        if (session.isVideo && remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = e.streams[0];
+          remoteVideoRef.current.play().catch(() => {});
+        } else if (remoteAudioRef.current) {
           remoteAudioRef.current.srcObject = e.streams[0];
           remoteAudioRef.current.play().catch(() => {});
         }
@@ -3137,8 +3173,12 @@ function CallScreen({ session, token, onEnd }: { session: CallSession; token: st
         pendingCandidatesRef.current = [];
       }
 
+      const offerConstraints = session.isVideo
+        ? { offerToReceiveAudio: true, offerToReceiveVideo: true }
+        : { offerToReceiveAudio: true, offerToReceiveVideo: false };
+
       if (session.direction === "outgoing") {
-        const offer = await pc.createOffer({ offerToReceiveAudio: true });
+        const offer = await pc.createOffer(offerConstraints);
         await pc.setLocalDescription(offer);
         await sendSignal("offer", { sdp: offer.sdp, type: offer.type });
       }
@@ -3191,6 +3231,7 @@ function CallScreen({ session, token, onEnd }: { session: CallSession; token: st
       if (pollRef.current) clearInterval(pollRef.current);
       if (remoteAudioRef.current) { remoteAudioRef.current.srcObject = null; remoteAudioRef.current.remove(); remoteAudioRef.current = null; }
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function toggleMute() {
@@ -3199,28 +3240,191 @@ function CallScreen({ session, token, onEnd }: { session: CallSession; token: st
     setMuted(m => !m);
   }
 
+  function toggleVideo() {
+    const tracks = localStreamRef.current?.getVideoTracks() ?? [];
+    tracks.forEach(t => { t.enabled = videoOff; });
+    setVideoOff(v => !v);
+  }
+
+  async function flipCamera() {
+    const newFacing = facingMode === "user" ? "environment" : "user";
+    setFacingMode(newFacing);
+    const pc = pcRef.current;
+    if (!pc) return;
+    try {
+      const newStream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: { facingMode: newFacing, width: { ideal: 1280 }, height: { ideal: 720 } },
+      });
+      const newVideoTrack = newStream.getVideoTracks()[0];
+      if (!newVideoTrack) return;
+      const sender = pc.getSenders().find(s => s.track?.kind === "video");
+      if (sender) await sender.replaceTrack(newVideoTrack);
+      // Останавливаем старые треки видео
+      localStreamRef.current?.getVideoTracks().forEach(t => t.stop());
+      // Заменяем стрим
+      const audioTracks = localStreamRef.current?.getAudioTracks() ?? [];
+      const newCombined = new MediaStream([...audioTracks, newVideoTrack]);
+      localStreamRef.current = newCombined;
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = newCombined;
+        localVideoRef.current.play().catch(() => {});
+      }
+    } catch { /* камера недоступна */ }
+  }
+
+  function toggleSpeaker() {
+    setSpeaker(s => !s);
+    // На мобильных устройствах setSinkId позволяет переключить на наушник/динамик
+    if (remoteAudioRef.current && "setSinkId" in remoteAudioRef.current) {
+      (remoteAudioRef.current as HTMLAudioElement & { setSinkId: (id: string) => Promise<void> })
+        .setSinkId(speaker ? "" : "default").catch(() => {});
+    }
+  }
+
   const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
   const statusLabel = callStatus === "active" ? fmt(elapsed) : (session.direction === "outgoing" ? "Вызов..." : "Соединение...");
 
+  // ── Видеозвонок ──
+  if (session.isVideo) {
+    return (
+      <div className="fixed inset-0 z-50 bg-black flex flex-col animate-fade-in">
+        {/* Удалённое видео (фон) */}
+        <video ref={remoteVideoRef} autoPlay playsInline
+          className="absolute inset-0 w-full h-full object-cover"
+          style={{ background: "#000" }} />
+
+        {/* Оверлей когда нет соединения */}
+        {callStatus !== "active" && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 z-10"
+            style={{ background: "linear-gradient(160deg, #0a1628dd 0%, #0d2040dd 100%)" }}>
+            <div className="w-24 h-24 rounded-full overflow-hidden ring-4 ring-white/20 shadow-[0_0_60px_rgba(0,180,230,0.4)] animate-pulse">
+              {session.peerAvatar
+                ? <img src={session.peerAvatar} className="w-full h-full object-cover" alt="" />
+                : <div className="w-full h-full bg-gradient-to-br from-blue-600 to-cyan-500 flex items-center justify-center">
+                    <span className="text-3xl font-golos font-black text-white">{session.peerName[0]}</span>
+                  </div>}
+            </div>
+            <p className="text-white text-xl font-golos font-bold">{session.peerName}</p>
+            <p className="text-cyan-300 text-sm">{statusLabel}</p>
+          </div>
+        )}
+
+        {/* Таймер поверх видео */}
+        {callStatus === "active" && (
+          <div className="absolute top-safe-top left-0 right-0 flex items-center justify-between px-4 pt-12 z-20">
+            <div className="flex items-center gap-2 bg-black/40 backdrop-blur-sm rounded-full px-3 py-1.5">
+              <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+              <span className="text-white text-sm font-medium">{fmt(elapsed)}</span>
+            </div>
+            <div className="text-white/80 text-sm font-medium bg-black/40 backdrop-blur-sm rounded-full px-3 py-1.5">
+              {session.peerName}
+            </div>
+          </div>
+        )}
+
+        {/* Своё видео — маленькое в углу */}
+        <div className="absolute top-16 right-4 z-20 mt-8">
+          <div className="w-28 h-40 rounded-2xl overflow-hidden ring-2 ring-white/20 shadow-xl bg-black"
+            style={{ boxShadow: "0 4px 24px rgba(0,0,0,0.6)" }}>
+            {videoOff
+              ? <div className="w-full h-full flex items-center justify-center bg-gray-900">
+                  <Icon name="VideoOff" size={24} className="text-white/40" />
+                </div>
+              : <video ref={localVideoRef} autoPlay playsInline muted
+                  className="w-full h-full object-cover" style={{ transform: "scaleX(-1)" }} />
+            }
+          </div>
+        </div>
+
+        {/* Кнопки управления */}
+        <div className="absolute bottom-0 left-0 right-0 z-20 px-6 pb-12 pt-6"
+          style={{ background: "linear-gradient(to top, rgba(0,0,0,0.8) 0%, transparent 100%)" }}>
+          <div className="flex justify-center gap-4 mb-6">
+            {/* Микрофон */}
+            <button onClick={toggleMute}
+              className={`flex flex-col items-center gap-1.5 w-16 h-16 rounded-2xl justify-center transition-all active:scale-95
+                ${muted ? "bg-red-500/80" : "bg-white/15 backdrop-blur-sm"}`}>
+              <Icon name={muted ? "MicOff" : "Mic"} size={22} className="text-white" />
+              <span className="text-[10px] text-white/80">{muted ? "Вкл" : "Микр"}</span>
+            </button>
+
+            {/* Видео вкл/выкл */}
+            <button onClick={toggleVideo}
+              className={`flex flex-col items-center gap-1.5 w-16 h-16 rounded-2xl justify-center transition-all active:scale-95
+                ${videoOff ? "bg-red-500/80" : "bg-white/15 backdrop-blur-sm"}`}>
+              <Icon name={videoOff ? "VideoOff" : "Video"} size={22} className="text-white" />
+              <span className="text-[10px] text-white/80">{videoOff ? "Вкл" : "Видео"}</span>
+            </button>
+
+            {/* Перевернуть камеру */}
+            <button onClick={flipCamera}
+              className="flex flex-col items-center gap-1.5 w-16 h-16 rounded-2xl justify-center bg-white/15 backdrop-blur-sm transition-all active:scale-95">
+              <Icon name="FlipHorizontal2" size={22} className="text-white" />
+              <span className="text-[10px] text-white/80">Камера</span>
+            </button>
+          </div>
+
+          {/* Завершить */}
+          <div className="flex justify-center">
+            <button onClick={endCall}
+              className="w-20 h-20 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center shadow-[0_0_30px_rgba(239,68,68,0.6)] transition-all active:scale-95">
+              <Icon name="PhoneOff" size={30} className="text-white" />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Аудиозвонок ──
   return (
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-between py-16 px-8 animate-fade-in"
-      style={{ background: "linear-gradient(160deg, #0a1628 0%, #0d2040 50%, #071020 100%)" }}>
-      <div className="flex flex-col items-center gap-4 mt-8">
-        <div className={`w-28 h-28 rounded-full bg-gradient-to-br from-blue-600 to-cyan-500 flex items-center justify-center shadow-[0_0_60px_rgba(0,180,230,0.4)] transition-all ${callStatus === "active" ? "scale-110" : "animate-pulse"}`}>
-          <span className="text-4xl font-golos font-black text-white">{session.peerName[0]}</span>
-        </div>
-        <div className="text-xl font-golos font-bold text-white">{session.peerName}</div>
-        <div className={`text-sm font-medium ${callStatus === "active" ? "text-green-400" : "text-cyan-300"}`}>{statusLabel}</div>
+      style={{ background: "linear-gradient(160deg, #0a1628 0%, #0d2040 60%, #071020 100%)" }}>
+
+      {/* Декор */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className={`absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full transition-all duration-1000
+          ${callStatus === "active" ? "w-96 h-96 opacity-10" : "w-72 h-72 opacity-5"}`}
+          style={{ background: "radial-gradient(circle, #0ea5e9, transparent)" }} />
       </div>
 
-      <div className="flex flex-col items-center gap-8 w-full">
-        <div className="flex justify-center gap-8">
+      <div className="flex flex-col items-center gap-4 mt-8 relative z-10">
+        <div className={`w-28 h-28 rounded-full overflow-hidden ring-4 transition-all duration-500
+          ${callStatus === "active" ? "ring-green-400/50 shadow-[0_0_60px_rgba(74,222,128,0.3)]" : "ring-blue-500/30 shadow-[0_0_60px_rgba(0,180,230,0.3)] animate-pulse"}`}>
+          {session.peerAvatar
+            ? <img src={session.peerAvatar} className="w-full h-full object-cover" alt="" />
+            : <div className="w-full h-full bg-gradient-to-br from-blue-600 to-cyan-500 flex items-center justify-center">
+                <span className="text-4xl font-golos font-black text-white">{session.peerName[0]}</span>
+              </div>}
+        </div>
+        <div className="text-xl font-golos font-bold text-white">{session.peerName}</div>
+        <div className={`text-sm font-medium flex items-center gap-2 ${callStatus === "active" ? "text-green-400" : "text-cyan-300"}`}>
+          {callStatus === "active" && <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />}
+          {statusLabel}
+        </div>
+        {noMic && <p className="text-xs text-red-400 mt-1">Нет доступа к микрофону</p>}
+      </div>
+
+      <div className="flex flex-col items-center gap-8 w-full relative z-10">
+        <div className="flex justify-center gap-6">
+          {/* Микрофон */}
           <button onClick={toggleMute}
-            className={`flex flex-col items-center gap-2 p-4 rounded-full transition-all ${muted ? "bg-red-500/30 text-red-300" : "bg-white/10 text-white"}`}>
-            <Icon name={muted ? "MicOff" : "Mic"} size={24} />
-            <span className="text-xs">{muted ? "Выкл" : "Микр"}</span>
+            className={`flex flex-col items-center gap-2 w-16 h-16 rounded-2xl justify-center transition-all active:scale-95
+              ${muted ? "bg-red-500/30 text-red-300" : "bg-white/10 text-white"}`}>
+            <Icon name={muted ? "MicOff" : "Mic"} size={22} />
+            <span className="text-[10px]">{muted ? "Выкл" : "Микр"}</span>
+          </button>
+
+          {/* Спикерфон */}
+          <button onClick={toggleSpeaker}
+            className={`flex flex-col items-center gap-2 w-16 h-16 rounded-2xl justify-center transition-all active:scale-95
+              ${speaker ? "bg-blue-500/30 text-blue-300" : "bg-white/10 text-white"}`}>
+            <Icon name={speaker ? "Volume2" : "VolumeX"} size={22} />
+            <span className="text-[10px]">{speaker ? "Громко" : "Тихо"}</span>
           </button>
         </div>
+
         <button onClick={endCall}
           className="w-20 h-20 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center shadow-[0_0_30px_rgba(239,68,68,0.5)] transition-all active:scale-95">
           <Icon name="PhoneOff" size={32} className="text-white" />
@@ -3231,8 +3435,6 @@ function CallScreen({ session, token, onEnd }: { session: CallSession; token: st
 }
 
 function IncomingCallBanner({ session, onAccept, onDecline }: { session: CallSession; onAccept: () => void; onDecline: () => void }) {
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-
   useEffect(() => {
     const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
     let stopped = false;
@@ -3252,7 +3454,6 @@ function IncomingCallBanner({ session, onAccept, onDecline }: { session: CallSes
         await new Promise(r => setTimeout(r, 1200));
       }
     }
-
     ring();
 
     let vibrateInterval: ReturnType<typeof setInterval> | null = null;
@@ -3260,7 +3461,6 @@ function IncomingCallBanner({ session, onAccept, onDecline }: { session: CallSes
       navigator.vibrate([400, 200, 400]);
       vibrateInterval = setInterval(() => navigator.vibrate([400, 200, 400]), 1200);
     }
-
     return () => {
       stopped = true;
       ctx.close();
@@ -3271,28 +3471,44 @@ function IncomingCallBanner({ session, onAccept, onDecline }: { session: CallSes
 
   return (
     <div className="fixed top-4 left-0 right-0 z-50 flex justify-center px-4 animate-fade-in">
-      <div className="w-full max-w-md glass border border-white/10 rounded-2xl px-4 py-3 shadow-2xl flex items-center gap-3">
-        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-600 to-cyan-500 flex items-center justify-center flex-shrink-0">
-          <span className="font-golos font-bold text-white text-sm">{session.peerName[0]}</span>
+      <div className="w-full max-w-lg glass border border-white/10 rounded-2xl px-4 py-3 shadow-2xl flex items-center gap-3">
+        {/* Аватар */}
+        <div className="w-11 h-11 rounded-full overflow-hidden flex-shrink-0 ring-2 ring-white/10">
+          {session.peerAvatar
+            ? <img src={session.peerAvatar} className="w-full h-full object-cover" alt="" />
+            : <div className="w-full h-full bg-gradient-to-br from-blue-600 to-cyan-500 flex items-center justify-center">
+                <span className="font-golos font-bold text-white text-sm">{session.peerName[0]}</span>
+              </div>}
         </div>
+
         <div className="flex-1 min-w-0">
           <div className="font-golos font-semibold text-sm text-foreground truncate">{session.peerName}</div>
-          <div className="text-xs text-cyan-400">Входящий звонок</div>
+          <div className="flex items-center gap-1.5 text-xs text-cyan-400">
+            <Icon name={session.isVideo ? "Video" : "Phone"} size={11} />
+            <span>Входящий {session.isVideo ? "видеозвонок" : "звонок"}</span>
+          </div>
         </div>
-        <button onClick={onDecline} className="p-2.5 rounded-full bg-red-500/20 hover:bg-red-500/40 transition-colors">
+
+        {/* Отклонить */}
+        <button onClick={onDecline}
+          className="flex flex-col items-center gap-0.5 p-2.5 rounded-full bg-red-500/20 hover:bg-red-500/40 transition-colors">
           <Icon name="PhoneOff" size={18} className="text-red-400" />
         </button>
-        <button onClick={onAccept} className="p-2.5 rounded-full bg-green-500/20 hover:bg-green-500/40 transition-colors">
-          <Icon name="Phone" size={18} className="text-green-400" />
+
+        {/* Принять — иконка зависит от типа звонка */}
+        <button onClick={onAccept}
+          className="flex flex-col items-center gap-0.5 p-2.5 rounded-full bg-green-500/20 hover:bg-green-500/40 transition-colors">
+          <Icon name={session.isVideo ? "Video" : "Phone"} size={18} className="text-green-400" />
         </button>
       </div>
     </div>
   );
 }
 
-function CallsTab({ token, onCall }: { token: string; onCall: (userId: number, userName: string) => void }) {
-  const [calls, setCalls] = useState<{ id: number; caller_id: number; callee_id: number; status: string; duration: string | null; type: string; caller_name: string; callee_name: string }[]>([]);
+function CallsTab({ token, onCall }: { token: string; onCall: (userId: number, userName: string, isVideo?: boolean) => void }) {
+  const [calls, setCalls] = useState<{ id: number; caller_id: number; callee_id: number; status: string; is_video: boolean; duration: string | null; type: string; caller_name: string; callee_name: string; caller_avatar?: string | null; callee_avatar?: string | null }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState<"all" | "incoming" | "outgoing" | "missed">("all");
 
   useEffect(() => {
     fetch(`${CALLS_URL}/history`, { headers: apiHeaders(token) })
@@ -3301,43 +3517,76 @@ function CallsTab({ token, onCall }: { token: string; onCall: (userId: number, u
       .finally(() => setLoading(false));
   }, [token]);
 
+  const filtered = calls.filter(c => {
+    if (filter === "all") return true;
+    if (filter === "missed") return c.status === "missed" || (c.type === "incoming" && c.status !== "ended");
+    return c.type === filter;
+  });
+
   return (
     <div className="flex flex-col h-full">
-      <div className="px-4 pt-4 pb-3">
-        <h1 className="text-2xl font-golos font-black text-gradient mb-4">Звонки</h1>
+      <div className="px-4 pt-4 pb-3 flex-shrink-0">
+        <h1 className="text-2xl font-golos font-black text-gradient mb-3">Звонки</h1>
+        {/* Фильтры */}
+        <div className="flex gap-1.5">
+          {(["all", "incoming", "outgoing", "missed"] as const).map(f => (
+            <button key={f} onClick={() => setFilter(f)}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-all
+                ${filter === f ? "bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-[0_0_12px_rgba(0,119,182,0.4)]" : "bg-white/8 text-muted-foreground hover:text-foreground hover:bg-white/12"}`}>
+              {{ all: "Все", incoming: "Входящие", outgoing: "Исходящие", missed: "Пропущенные" }[f]}
+            </button>
+          ))}
+        </div>
       </div>
+
       <div className="flex-1 overflow-y-auto scroll-container">
         {loading && <div className="text-center py-8 text-sm text-muted-foreground">Загрузка...</div>}
-        {!loading && calls.length === 0 && (
+        {!loading && filtered.length === 0 && (
           <div className="flex flex-col items-center justify-center h-48 gap-3 text-muted-foreground">
             <Icon name="Phone" size={36} className="opacity-30" />
             <p className="text-sm">Звонков пока нет</p>
           </div>
         )}
-        {calls.map((call, i) => {
-          const cfg = {
-            incoming: { icon: "PhoneIncoming", color: "text-green-400", label: "Входящий" },
-            outgoing: { icon: "PhoneOutgoing", color: "text-cyan-400", label: "Исходящий" },
-            missed: { icon: "PhoneMissed", color: "text-red-400", label: "Пропущенный" },
-            declined: { icon: "PhoneMissed", color: "text-red-400", label: "Отклонён" },
-          }[call.type] ?? { icon: "Phone", color: "text-muted-foreground", label: call.type };
+        {filtered.map((call, i) => {
+          const isMissed = call.status === "missed" || (call.type === "incoming" && call.status === "ringing");
+          const cfg = isMissed
+            ? { icon: "PhoneMissed", color: "text-red-400", label: "Пропущенный" }
+            : call.type === "outgoing"
+              ? { icon: "PhoneOutgoing", color: "text-cyan-400", label: "Исходящий" }
+              : { icon: "PhoneIncoming", color: "text-green-400", label: "Входящий" };
+
           const peerName = call.type === "outgoing" ? call.callee_name : call.caller_name;
           const peerId = call.type === "outgoing" ? call.callee_id : call.caller_id;
+          const peerAvatar = call.type === "outgoing" ? call.callee_avatar : call.caller_avatar;
+
           return (
             <div key={call.id} className="flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-all animate-fade-in"
               style={{ animationDelay: `${i * 0.04}s` }}>
-              <AvatarEl name={peerName} size="md" />
-              <div className="flex-1">
-                <div className="font-golos font-semibold text-foreground text-sm">{peerName}</div>
+              <AvatarEl name={peerName} size="md" avatarUrl={peerAvatar} />
+              <div className="flex-1 min-w-0">
+                <div className="font-golos font-semibold text-foreground text-sm truncate">{peerName}</div>
                 <div className="flex items-center gap-1.5 mt-0.5">
                   <Icon name={cfg.icon} size={12} className={cfg.color} />
                   <span className={`text-xs ${cfg.color}`}>{cfg.label}</span>
+                  {call.is_video && (
+                    <span className="flex items-center gap-0.5 text-xs text-purple-400">
+                      <Icon name="Video" size={10} />видео
+                    </span>
+                  )}
                   {call.duration && <span className="text-xs text-muted-foreground">· {call.duration}</span>}
                 </div>
               </div>
-              <button onClick={() => onCall(peerId, peerName)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
-                <Icon name="Phone" size={16} className="text-sky-400" />
-              </button>
+              {/* Перезвонить — аудио или видео в зависимости от типа */}
+              <div className="flex items-center gap-1">
+                <button onClick={() => onCall(peerId, peerName, false)}
+                  className="p-2 hover:bg-white/10 rounded-full transition-colors" title="Аудиозвонок">
+                  <Icon name="Phone" size={15} className="text-sky-400" />
+                </button>
+                <button onClick={() => onCall(peerId, peerName, true)}
+                  className="p-2 hover:bg-white/10 rounded-full transition-colors" title="Видеозвонок">
+                  <Icon name="Video" size={15} className="text-purple-400" />
+                </button>
+              </div>
             </div>
           );
         })}
@@ -3410,7 +3659,7 @@ interface Contact {
   avatar_url: string | null;
 }
 
-function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (userId: number, userName: string) => void; onOpenChat?: (userId: number) => void }) {
+function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (userId: number, userName: string, isVideo?: boolean) => void; onOpenChat?: (userId: number) => void }) {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -4580,15 +4829,15 @@ export default function App() {
     }
   }
 
-  async function startCall(calleeId: number, calleeName: string) {
+  async function startCall(calleeId: number, calleeName: string, isVideo = false) {
     if (!token) return;
     const res = await fetch(`${CALLS_URL}/initiate`, {
       method: "POST", headers: apiHeaders(token),
-      body: JSON.stringify({ callee_id: calleeId }),
+      body: JSON.stringify({ callee_id: calleeId, is_video: isVideo }),
     });
     const data = await res.json();
     if (data.call_id) {
-      setActiveCall({ callId: data.call_id, peerId: calleeId, peerName: calleeName, direction: "outgoing", status: "ringing" });
+      setActiveCall({ callId: data.call_id, peerId: calleeId, peerName: calleeName, direction: "outgoing", status: "ringing", isVideo });
       setIncomingCall(null);
     }
   }
@@ -4614,7 +4863,7 @@ export default function App() {
       if (!res) return;
       const data = await res.json();
       if (data.call) {
-        setIncomingCall({ callId: data.call.id, peerId: data.call.caller_id, peerName: data.call.caller_name, direction: "incoming", status: "ringing" });
+        setIncomingCall({ callId: data.call.id, peerId: data.call.caller_id, peerName: data.call.caller_name, peerAvatar: data.call.caller_avatar ?? null, direction: "incoming", status: "ringing", isVideo: !!data.call.is_video });
       } else {
         setIncomingCall(null);
       }

@@ -1,4 +1,4 @@
-"""Звонки: сигнализация WebRTC (offer/answer/ice), управление статусом звонка, история"""
+"""Звонки: аудио и видеозвонки через WebRTC (offer/answer/ice), история"""
 import json
 import os
 import psycopg2
@@ -13,17 +13,18 @@ def auth_user(conn, token: str):
         return None
     with conn.cursor() as cur:
         cur.execute(f"""
-            SELECT u.id, u.name, u.phone, u.bio, u.status
+            SELECT u.id, u.name, u.avatar_url
             FROM {SCHEMA}.sessions s
             JOIN {SCHEMA}.users u ON u.id = s.user_id
             WHERE s.token = %s AND s.expires_at > NOW()
         """, (token,))
         row = cur.fetchone()
         if row:
-            return {"id": row[0], "name": row[1], "phone": row[2], "bio": row[3], "status": row[4]}
+            return {"id": row[0], "name": row[1], "avatar_url": row[2]}
     return None
 
 def handler(event: dict, context) -> dict:
+    """Сервис звонков: аудио и видео через WebRTC"""
     cors = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -46,24 +47,23 @@ def handler(event: dict, context) -> dict:
     uid = user["id"]
 
     try:
-        # POST /initiate — начать звонок
+        # POST /initiate — начать звонок (аудио или видео)
         if path.endswith("/initiate") and method == "POST":
             body = json.loads(event.get("body") or "{}")
             callee_id = body.get("callee_id")
+            is_video = bool(body.get("is_video", False))
             if not callee_id:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "callee_id required"})}
 
             with conn.cursor() as cur:
-                # Завершаем старые активные звонки этого пользователя
                 cur.execute(f"""
                     UPDATE {SCHEMA}.calls SET status='ended', ended_at=NOW()
                     WHERE (caller_id=%s OR callee_id=%s) AND status IN ('ringing','active')
                 """, (uid, uid))
-                # Создаём новый звонок
                 cur.execute(f"""
-                    INSERT INTO {SCHEMA}.calls (caller_id, callee_id, status)
-                    VALUES (%s, %s, 'ringing') RETURNING id
-                """, (uid, callee_id))
+                    INSERT INTO {SCHEMA}.calls (caller_id, callee_id, status, is_video)
+                    VALUES (%s, %s, 'ringing', %s) RETURNING id
+                """, (uid, callee_id, is_video))
                 call_id = cur.fetchone()[0]
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"call_id": call_id})}
@@ -108,9 +108,9 @@ def handler(event: dict, context) -> dict:
         if path.endswith("/signal") and method == "POST":
             body = json.loads(event.get("body") or "{}")
             call_id = body.get("call_id")
-            signal_type = body.get("type")  # offer | answer | ice-candidate
+            signal_type = body.get("type")
             payload = body.get("payload")
-            if not all([call_id, signal_type, payload]):
+            if not all([call_id, signal_type, payload is not None]):
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "call_id, type, payload required"})}
 
             with conn.cursor() as cur:
@@ -122,7 +122,7 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"signal_id": sig_id})}
 
-        # GET /poll?call_id=X&last_signal_id=Y — получить новые сигналы и статус звонка
+        # GET /poll?call_id=X&last_signal_id=Y — получить новые сигналы и статус
         if path.endswith("/poll") and method == "GET":
             params = event.get("queryStringParameters") or {}
             call_id = int(params.get("call_id", 0))
@@ -130,7 +130,7 @@ def handler(event: dict, context) -> dict:
 
             with conn.cursor() as cur:
                 cur.execute(f"""
-                    SELECT c.id, c.status, c.caller_id, c.callee_id,
+                    SELECT c.id, c.status, c.caller_id, c.callee_id, c.is_video,
                            uc.name as caller_name, uu.name as callee_name
                     FROM {SCHEMA}.calls c
                     JOIN {SCHEMA}.users uc ON uc.id = c.caller_id
@@ -143,7 +143,8 @@ def handler(event: dict, context) -> dict:
                 call_info = {
                     "id": row[0], "status": row[1],
                     "caller_id": row[2], "callee_id": row[3],
-                    "caller_name": row[4], "callee_name": row[5]
+                    "is_video": bool(row[4]),
+                    "caller_name": row[5], "callee_name": row[6]
                 }
 
                 cur.execute(f"""
@@ -160,7 +161,7 @@ def handler(event: dict, context) -> dict:
         if path.endswith("/incoming") and method == "GET":
             with conn.cursor() as cur:
                 cur.execute(f"""
-                    SELECT c.id, c.caller_id, u.name as caller_name, c.created_at
+                    SELECT c.id, c.caller_id, u.name, u.avatar_url, c.is_video, c.created_at
                     FROM {SCHEMA}.calls c
                     JOIN {SCHEMA}.users u ON u.id = c.caller_id
                     WHERE c.callee_id=%s AND c.status='ringing'
@@ -170,7 +171,13 @@ def handler(event: dict, context) -> dict:
                 row = cur.fetchone()
                 if row:
                     return {"statusCode": 200, "headers": cors, "body": json.dumps({
-                        "call": {"id": row[0], "caller_id": row[1], "caller_name": row[2]}
+                        "call": {
+                            "id": row[0],
+                            "caller_id": row[1],
+                            "caller_name": row[2],
+                            "caller_avatar": row[3],
+                            "is_video": bool(row[4]),
+                        }
                     })}
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"call": None})}
 
@@ -178,9 +185,10 @@ def handler(event: dict, context) -> dict:
         if path.endswith("/history") and method == "GET":
             with conn.cursor() as cur:
                 cur.execute(f"""
-                    SELECT c.id, c.caller_id, c.callee_id, c.status,
+                    SELECT c.id, c.caller_id, c.callee_id, c.status, c.is_video,
                            c.created_at, c.answered_at, c.ended_at,
-                           uc.name as caller_name, uu.name as callee_name
+                           uc.name as caller_name, uu.name as callee_name,
+                           uc.avatar_url as caller_avatar, uu.avatar_url as callee_avatar
                     FROM {SCHEMA}.calls c
                     JOIN {SCHEMA}.users uc ON uc.id = c.caller_id
                     JOIN {SCHEMA}.users uu ON uu.id = c.callee_id
@@ -188,21 +196,29 @@ def handler(event: dict, context) -> dict:
                     ORDER BY c.created_at DESC LIMIT 50
                 """, (uid, uid))
                 rows = cur.fetchall()
-                calls = []
-                for r in rows:
-                    duration = None
-                    if r[5] and r[6]:
-                        secs = int((r[6] - r[5]).total_seconds())
-                        duration = f"{secs // 60}:{secs % 60:02d}"
-                    calls.append({
-                        "id": r[0],
-                        "caller_id": r[1], "callee_id": r[2],
-                        "status": r[3],
-                        "created_at": r[4].isoformat() if r[4] else None,
-                        "duration": duration,
-                        "caller_name": r[7], "callee_name": r[8],
-                        "type": "outgoing" if r[1] == uid else ("missed" if r[3] == "missed" else "incoming")
-                    })
+
+            calls = []
+            for r in rows:
+                call_type = "outgoing" if r[1] == uid else "incoming"
+                duration = None
+                if r[7] and r[6]:  # ended_at и answered_at
+                    from datetime import datetime
+                    try:
+                        ended = r[7] if hasattr(r[7], 'timestamp') else datetime.fromisoformat(str(r[7]))
+                        answered = r[6] if hasattr(r[6], 'timestamp') else datetime.fromisoformat(str(r[6]))
+                        secs = int((ended - answered).total_seconds())
+                        duration = f"{secs // 60}:{str(secs % 60).zfill(2)}"
+                    except Exception:
+                        duration = None
+                calls.append({
+                    "id": r[0], "caller_id": r[1], "callee_id": r[2],
+                    "status": r[3], "is_video": bool(r[4]),
+                    "created_at": str(r[5]) if r[5] else None,
+                    "duration": duration, "type": call_type,
+                    "caller_name": r[8], "callee_name": r[9],
+                    "caller_avatar": r[10], "callee_avatar": r[11],
+                })
+
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"calls": calls})}
 
         return {"statusCode": 404, "headers": cors, "body": json.dumps({"error": "Not found"})}
