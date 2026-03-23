@@ -1,6 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import Icon from "@/components/ui/icon";
 
+interface BeforeInstallPromptEvent extends Event {
+  prompt(): Promise<void>;
+}
+
 // ─── API Config ───────────────────────────────────────────────────────────────
 
 const AUTH_URL = "https://functions.poehali.dev/7f5e5202-ad61-4f31-8181-6393be10b3ed";
@@ -142,6 +146,13 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User, isNew?: bo
   const [error, setError] = useState("");
   const [showPolicy, setShowPolicy] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState<Event | null>(null);
+
+  useEffect(() => {
+    const handler = (e: Event) => { e.preventDefault(); setInstallPrompt(e); };
+    window.addEventListener("beforeinstallprompt", handler);
+    return () => window.removeEventListener("beforeinstallprompt", handler);
+  }, []);
 
   async function handleSubmit() {
     setError("");
@@ -257,6 +268,13 @@ function AuthScreen({ onAuth }: { onAuth: (token: string, user: User, isNew?: bo
                 ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />{mode === "register" ? "Создаём аккаунт..." : "Входим..."}</>
                 : <><Icon name={mode === "register" ? "UserPlus" : "LogIn"} size={16} />{mode === "register" ? "Создать аккаунт" : "Войти"}</>}
             </button>
+
+            {installPrompt && (
+              <button onClick={() => { (installPrompt as BeforeInstallPromptEvent).prompt(); setInstallPrompt(null); }}
+                className="w-full py-3.5 rounded-2xl border border-sky-500/30 bg-sky-500/10 text-sky-300 font-semibold text-sm hover:bg-sky-500/20 active:scale-[0.98] transition-all flex items-center justify-center gap-2">
+                <Icon name="Download" size={16} />Установить приложение на телефон
+              </button>
+            )}
           </div>
         </>
 
