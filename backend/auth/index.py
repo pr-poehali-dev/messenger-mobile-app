@@ -285,7 +285,7 @@ def handler(event: dict, context) -> dict:
 
             if purpose == "register":
                 # Регистрация нового пользователя
-                phone_val = contact if contact_type == "phone" else None
+                phone_val = contact if contact_type == "phone" else ""
                 email_val = contact if contact_type == "email" else None
 
                 with conn.cursor() as cur:
@@ -299,7 +299,7 @@ def handler(event: dict, context) -> dict:
                     token_val = secrets.token_hex(32)
                     cur.execute(f"INSERT INTO {SCHEMA}.sessions (user_id, token) VALUES (%s, %s)", (user_id, token_val))
                 conn.commit()
-                user = {"id": user_id, "name": name, "phone": phone_val, "email": email_val,
+                user = {"id": user_id, "name": name, "phone": phone_val or None, "email": email_val,
                         "bio": "", "status": "online", "avatar_url": None}
                 return {"statusCode": 200, "headers": cors, "body": json.dumps({"token": token_val, "user": user, "is_new": True})}
 
