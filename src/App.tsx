@@ -5746,9 +5746,16 @@ export default function App() {
           if (e.data?.type === "SYNC_REQUIRED") {
             window.dispatchEvent(new CustomEvent("kasper:sync"));
           }
-          // SW сообщает что пользователь кликнул на уведомление о звонке
           if (e.data?.type === "CALL_NOTIFICATION_CLICKED") {
             window.dispatchEvent(new CustomEvent("kasper:check-incoming-call"));
+          }
+          // Ответить на звонок прямо из уведомления
+          if (e.data?.type === "CALL_ANSWER_FROM_SW") {
+            window.dispatchEvent(new CustomEvent("kasper:answer-call", { detail: { call_id: e.data.call_id } }));
+          }
+          // Звонок отклонён из уведомления (без открытия приложения)
+          if (e.data?.type === "CALL_DECLINED_FROM_SW") {
+            window.dispatchEvent(new CustomEvent("kasper:declined-from-sw", { detail: { call_id: e.data.call_id } }));
           }
         });
         setInterval(() => reg.update().catch(() => {}), 60_000);
@@ -5958,6 +5965,14 @@ export default function App() {
     }
   }
 
+  // ── Передаём токен в SW для decline-звонков из уведомления ──
+  useEffect(() => {
+    if (!token || !("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.ready.then(reg => {
+      reg.active?.postMessage({ type: "UPDATE_AUTH_TOKEN", token });
+    });
+  }, [token]);
+
   async function startCall(calleeId: number, calleeName: string, isVideo = false) {
     if (!token) return;
     const res = await fetch(CALLS_URL, {
@@ -5971,9 +5986,25 @@ export default function App() {
     }
   }
 
+  // ── Ping-call: повторные push пока звонок идёт (вызывающая сторона) ──
+  useEffect(() => {
+    if (!activeCall || activeCall.direction !== "outgoing" || activeCall.status !== "ringing" || !token) return;
+    const pingInterval = setInterval(() => {
+      fetch(CALLS_URL, {
+        method: "POST", headers: apiHeaders(token),
+        body: JSON.stringify({ action: "ping-call", call_id: activeCall.callId }),
+      }).catch(() => {});
+    }, 4000);
+    return () => clearInterval(pingInterval);
+  }, [activeCall, token]);
+
   async function acceptCall(session: CallSession) {
     if (!token) return;
     await fetch(CALLS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "answer", call_id: session.callId }) });
+    // Сообщаем SW что звонок принят — остановить повторные уведомления
+    navigator.serviceWorker.ready.then(reg => {
+      reg.active?.postMessage({ type: "CALL_ANSWERED", call_id: session.callId });
+    });
     setActiveCall({ ...session, status: "active" });
     setIncomingCall(null);
   }
@@ -5981,6 +6012,10 @@ export default function App() {
   async function declineCall(session: CallSession) {
     if (!token) return;
     await fetch(CALLS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "decline", call_id: session.callId }) });
+    // Сообщаем SW чтобы закрыл уведомление
+    navigator.serviceWorker.ready.then(reg => {
+      reg.active?.postMessage({ type: "CALL_ENDED", call_id: session.callId });
+    });
     setIncomingCall(null);
   }
 
@@ -5999,15 +6034,42 @@ export default function App() {
       }
     }
 
-    // Немедленная проверка при клике на уведомление о звонке
+    // Ответить на звонок из уведомления (кнопка "Ответить")
+    async function handleAnswerFromSW(e: Event) {
+      const callId = (e as CustomEvent).detail?.call_id;
+      if (!callId || activeCall) return;
+      const res = await fetch(CALLS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "incoming" }) }).catch(() => null);
+      if (!res) return;
+      const data = await res.json();
+      if (data.call && data.call.id === callId) {
+        const session: CallSession = {
+          callId: data.call.id, peerId: data.call.caller_id, peerName: data.call.caller_name,
+          peerAvatar: data.call.caller_avatar ?? null, direction: "incoming", status: "ringing", isVideo: !!data.call.is_video,
+        };
+        await acceptCall(session);
+      }
+    }
+
+    // Звонок отклонён из SW — обновляем UI
+    function handleDeclinedFromSW(e: Event) {
+      const callId = (e as CustomEvent).detail?.call_id;
+      if (incomingCall && incomingCall.callId === callId) {
+        setIncomingCall(null);
+      }
+    }
+
     window.addEventListener("kasper:check-incoming-call", checkIncoming);
+    window.addEventListener("kasper:answer-call", handleAnswerFromSW);
+    window.addEventListener("kasper:declined-from-sw", handleDeclinedFromSW);
 
     const poll = setInterval(checkIncoming, 2000);
     return () => {
       clearInterval(poll);
       window.removeEventListener("kasper:check-incoming-call", checkIncoming);
+      window.removeEventListener("kasper:answer-call", handleAnswerFromSW);
+      window.removeEventListener("kasper:declined-from-sw", handleDeclinedFromSW);
     };
-  }, [token, user, activeCall]);
+  }, [token, user, activeCall, incomingCall]);
 
   const unreadCount = chatsForBadge.reduce((a, c) => a + (c.unread || 0), 0);
 

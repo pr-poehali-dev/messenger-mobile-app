@@ -313,6 +313,69 @@ def handler(event: dict, context) -> dict:
                     })}
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"call": None})}
 
+        # ping-call — повторный push входящего звонка (вызывается звонящим каждые ~4 сек)
+        if action == "ping-call":
+            body = body_pre
+            call_id = safe_int(body.get("call_id"))
+            if not call_id:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "call_id required"})}
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT c.id, c.callee_id, c.status, c.is_video
+                    FROM {SCHEMA}.calls c
+                    WHERE c.id = %s AND c.caller_id = %s AND c.status = 'ringing'
+                      AND c.created_at > NOW() - INTERVAL '75 seconds'
+                """, (call_id, uid))
+                row = cur.fetchone()
+            if not row:
+                return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": False, "reason": "not_ringing"})}
+
+            callee_id = row[1]
+            is_video = bool(row[3])
+
+            if WEBPUSH_AVAILABLE:
+                vapid_private = os.environ.get("VAPID_PRIVATE_KEY", "")
+                vapid_public = os.environ.get("VAPID_PUBLIC_KEY", "")
+                if vapid_private and vapid_public:
+                    with conn.cursor() as cur:
+                        cur.execute(f"""
+                            SELECT endpoint, p256dh, auth
+                            FROM {SCHEMA}.push_subscriptions
+                            WHERE user_id = %s
+                        """, (callee_id,))
+                        subs = cur.fetchall()
+                    call_type = "📹 Видеозвонок" if is_video else "📞 Аудиозвонок"
+                    push_data = json.dumps({
+                        "title": user["name"],
+                        "body": call_type,
+                        "tag": f"call-{call_id}",
+                        "type": "call",
+                        "call_id": call_id,
+                        "url": "/",
+                    })
+                    dead_endpoints = []
+                    for endpoint, p256dh, auth_k in subs:
+                        try:
+                            webpush(
+                                subscription_info={"endpoint": endpoint, "keys": {"p256dh": p256dh, "auth": auth_k}},
+                                data=push_data,
+                                vapid_private_key=vapid_private,
+                                vapid_claims={"sub": "mailto:push@poehali.dev"},
+                            )
+                        except WebPushException as ex:
+                            resp = ex.response
+                            status = resp.status_code if resp else 0
+                            if status in (404, 410):
+                                dead_endpoints.append(endpoint)
+                        except Exception as ex:
+                            print(f"[ping-call push] error: {ex}")
+                    for ep in dead_endpoints:
+                        with conn.cursor() as cur:
+                            cur.execute(f"DELETE FROM {SCHEMA}.push_subscriptions WHERE endpoint = %s", (ep,))
+                        conn.commit()
+
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
+
         # history — история звонков
         if action == "history":
             with conn.cursor() as cur:

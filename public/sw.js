@@ -1,9 +1,10 @@
 // ─── Каспер Service Worker ────────────────────────────────────────────────────
 // Обновляй BUILD_TIME при каждом деплое чтобы инвалидировать кэш у всех
-const BUILD_TIME = "20260324-v5";
+const BUILD_TIME = "20260324-v6";
 const CACHE_APP = `kasper-app-${BUILD_TIME}`;
 const CACHE_ASSETS = `kasper-assets-${BUILD_TIME}`;
 const APP_ICON = "https://cdn.poehali.dev/projects/84792fb2-1985-42c4-8056-a4e27799a11a/bucket/2069fcb7-f721-4674-b0d8-51603e738767.png";
+const CALLS_URL = "https://functions.poehali.dev/ec19ea73-ee73-48c3-a4cc-a6104054ed8e";
 
 // Ресурсы APP-шелла — предзагружаем при установке
 const APP_SHELL = [
@@ -18,13 +19,16 @@ const NO_CACHE_HOSTS = [
   "cdn.poehali.dev",
 ];
 
+// Активные звонки: call_id → intervalId (для повторной вибрации)
+const activeCallTimers = new Map();
+
 // ── Install: предзагружаем шелл ───────────────────────────────────────────────
 self.addEventListener("install", e => {
   e.waitUntil(
     caches.open(CACHE_APP)
       .then(c => c.addAll(APP_SHELL))
       .then(() => self.skipWaiting())
-      .catch(() => self.skipWaiting()) // не падаем если нет сети
+      .catch(() => self.skipWaiting())
   );
 });
 
@@ -100,10 +104,27 @@ self.addEventListener("fetch", e => {
 
 // ── Настройки уведомлений (синхронизируются из приложения) ───────────────────
 let swSettings = { bg_notif: true, preview: true, msg_sound: true };
+// Токен авторизации (передаётся из приложения для decline-звонков из SW)
+let swAuthToken = "";
 
 self.addEventListener("message", e => {
-  if (e.data && e.data.type === "UPDATE_NOTIF_SETTINGS") {
+  if (!e.data) return;
+  if (e.data.type === "UPDATE_NOTIF_SETTINGS") {
     Object.assign(swSettings, e.data.settings);
+  }
+  if (e.data.type === "UPDATE_AUTH_TOKEN") {
+    swAuthToken = e.data.token || "";
+  }
+  // Звонок завершён/принят — остановить повторные уведомления
+  if (e.data.type === "CALL_ENDED" || e.data.type === "CALL_ANSWERED") {
+    const callId = e.data.call_id;
+    if (callId && activeCallTimers.has(callId)) {
+      clearInterval(activeCallTimers.get(callId));
+      activeCallTimers.delete(callId);
+    }
+    // Закрываем уведомление о звонке
+    self.registration.getNotifications({ tag: `call-${callId}` })
+      .then(notifs => notifs.forEach(n => n.close()));
   }
 });
 
@@ -122,65 +143,155 @@ self.addEventListener("push", e => {
   const silent = !swSettings.msg_sound && !isCall;
   const body = (!isCall && !swSettings.preview) ? "Новое сообщение" : (payload.body || "Новое сообщение");
 
+  if (isCall) {
+    const callId = payload.call_id;
+    e.waitUntil(showCallNotification(payload, callId));
+  } else {
+    const notifOptions = {
+      body,
+      icon: APP_ICON,
+      badge: APP_ICON,
+      tag: payload.tag || "kasper-msg",
+      renotify: true,
+      silent,
+      data: { url: payload.url || "/", type: "message" },
+      vibrate: silent ? [] : [100, 50, 100],
+      actions: [
+        { action: "open", title: "Открыть" },
+        { action: "close", title: "Закрыть" },
+      ],
+    };
+    e.waitUntil(self.registration.showNotification(payload.title || "Каспер", notifOptions));
+  }
+});
+
+// ── Показ уведомления о звонке с повторной вибрацией ─────────────────────────
+function showCallNotification(payload, callId) {
   const notifOptions = {
-    body,
+    body: payload.body || "Входящий звонок",
     icon: APP_ICON,
     badge: APP_ICON,
-    tag: payload.tag || "kasper-msg",
+    tag: payload.tag || `call-${callId}`,
     renotify: true,
-    silent,
-    data: { url: payload.url || "/", type: payload.type || "message" },
-    vibrate: isCall ? [300, 100, 300, 100, 300] : (silent ? [] : [100, 50, 100]),
-    actions: isCall
-      ? [{ action: "open", title: "Ответить" }, { action: "close", title: "Отклонить" }]
-      : [{ action: "open", title: "Открыть" }, { action: "close", title: "Закрыть" }],
+    silent: false,
+    data: {
+      url: payload.url || "/",
+      type: "call",
+      call_id: callId,
+      caller_name: payload.title,
+    },
+    vibrate: [500, 200, 500, 200, 500],
+    actions: [
+      { action: "answer", title: "✅ Ответить" },
+      { action: "decline", title: "❌ Отклонить" },
+    ],
+    requireInteraction: true,
   };
 
-  // Звонки держим на экране пока пользователь не отреагирует
-  if (isCall) notifOptions.requireInteraction = true;
+  // Запускаем повторную вибрацию каждые 3 секунды пока звонок активен
+  if (callId && !activeCallTimers.has(callId)) {
+    const timerId = setInterval(() => {
+      // Проверяем что уведомление ещё показано
+      self.registration.getNotifications({ tag: `call-${callId}` }).then(notifs => {
+        if (notifs.length === 0) {
+          // Уведомление закрыто — стопаем таймер
+          clearInterval(timerId);
+          activeCallTimers.delete(callId);
+          return;
+        }
+        // Обновляем уведомление (renotify: true) — триггерит вибрацию снова
+        self.registration.showNotification(notifOptions.data.caller_name || "Каспер", {
+          ...notifOptions,
+          renotify: true,
+        });
+      });
+    }, 4000);
+    activeCallTimers.set(callId, timerId);
 
-  e.waitUntil(self.registration.showNotification(payload.title || "Каспер", notifOptions));
-});
+    // Авто-стоп через 60 секунд (звонок точно истёк)
+    setTimeout(() => {
+      if (activeCallTimers.has(callId)) {
+        clearInterval(activeCallTimers.get(callId));
+        activeCallTimers.delete(callId);
+        self.registration.getNotifications({ tag: `call-${callId}` })
+          .then(notifs => notifs.forEach(n => n.close()));
+      }
+    }, 60000);
+  }
+
+  return self.registration.showNotification(payload.title || "Каспер", notifOptions);
+}
 
 // ── Клик по уведомлению ───────────────────────────────────────────────────────
 self.addEventListener("notificationclick", e => {
   e.notification.close();
-  if (e.action === "close") {
-    // Для звонков — "Закрыть" не означает ответ, просто скрываем уведомление
-    return;
+  const notifData = e.notification.data || {};
+  const isCall = notifData.type === "call";
+  const callId = notifData.call_id;
+  const action = e.action;
+
+  // Остановить повторные уведомления звонка
+  if (isCall && callId && activeCallTimers.has(callId)) {
+    clearInterval(activeCallTimers.get(callId));
+    activeCallTimers.delete(callId);
   }
 
-  const notifData = e.notification.data || {};
-  const url = notifData.url || "/";
-  const isCall = notifData.type === "call";
+  if (isCall && action === "decline") {
+    // Отклонить звонок прямо из уведомления (без открытия приложения)
+    e.waitUntil(
+      declineCallFromSW(callId).then(() => {
+        // Уведомляем открытые вкладки что звонок отклонён
+        return clients.matchAll({ type: "window", includeUncontrolled: true }).then(list => {
+          list.forEach(c => c.postMessage({ type: "CALL_DECLINED_FROM_SW", call_id: callId }));
+        });
+      })
+    );
+    return;
+  }
 
   e.waitUntil(
     clients.matchAll({ type: "window", includeUncontrolled: true }).then(list => {
       const existing = list.find(c => c.url.startsWith(self.location.origin));
       if (existing) {
         existing.focus();
-        // Если это звонок — сообщаем приложению немедленно проверить входящие
         if (isCall) {
-          existing.postMessage({ type: "CALL_NOTIFICATION_CLICKED" });
+          const msgType = action === "answer" ? "CALL_ANSWER_FROM_SW" : "CALL_NOTIFICATION_CLICKED";
+          existing.postMessage({ type: msgType, call_id: callId });
         }
         return;
       }
       // Открываем приложение если закрыто
-      return clients.openWindow(url).then(client => {
+      return clients.openWindow(notifData.url || "/").then(client => {
         if (client && isCall) {
-          // Небольшая задержка чтобы приложение успело инициализироваться
-          setTimeout(() => client.postMessage({ type: "CALL_NOTIFICATION_CLICKED" }), 2000);
+          const msgType = action === "answer" ? "CALL_ANSWER_FROM_SW" : "CALL_NOTIFICATION_CLICKED";
+          setTimeout(() => client.postMessage({ type: msgType, call_id: callId }), 2000);
         }
       });
     })
   );
 });
 
+// ── Отклонить звонок прямо из SW (fetch к бэкенду) ───────────────────────────
+async function declineCallFromSW(callId) {
+  if (!swAuthToken || !callId) return;
+  try {
+    await fetch(CALLS_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Auth-Token": swAuthToken,
+      },
+      body: JSON.stringify({ action: "decline", call_id: callId }),
+    });
+  } catch (err) {
+    console.error("[SW] decline fetch error:", err);
+  }
+}
+
 // ── Background Sync (для офлайн-сообщений) ────────────────────────────────────
 self.addEventListener("sync", e => {
   if (e.tag === "sync-messages") {
     e.waitUntil(
-      // Просто уведомляем клиент что нужно синхронизироваться
       clients.matchAll({ type: "window" }).then(list =>
         Promise.all(list.map(c => c.postMessage({ type: "SYNC_REQUIRED" })))
       )
