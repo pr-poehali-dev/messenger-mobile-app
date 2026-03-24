@@ -432,12 +432,13 @@ def handler(event: dict, context) -> dict:
                             reply_text = rr[0]
                             reply_name = rr[1]
 
+                    print(f"[SEND] chat_id={chat_id} user_id={user_id} text_len={len(text)} file_url={file_url} file_type={file_type}")
                     cur.execute(f"""
                         INSERT INTO {SCHEMA}.messages
                             (chat_id, sender_id, text, file_url, file_name, file_size, file_type, reply_to_id, reply_to_text, reply_to_name)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         RETURNING id, created_at
-                    """, (chat_id, user_id, text or None, file_url, file_name, file_size, file_type, reply_to_id, reply_text, reply_name))
+                    """, (chat_id, user_id, text or '', file_url, file_name, file_size, file_type, reply_to_id, reply_text, reply_name))
                     msg_id, created_at = cur.fetchone()
 
                     # Восстанавливаем скрытый чат у получателя (если был скрыт)
@@ -449,6 +450,7 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
             except Exception as e:
                 conn.rollback()
+                print(f"[SEND ERROR] {e}")
                 return {"statusCode": 500, "headers": cors, "body": json.dumps({"error": str(e)})}
 
             # Send push notifications to other chat members

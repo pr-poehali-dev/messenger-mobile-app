@@ -1432,17 +1432,22 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
   async function doSend(optId: string, payload: { text: string; file_url?: string | null; file_name?: string | null; file_size?: number | null; file_type?: string | null; reply_to_id?: number | null }) {
     setMessages(prev => prev.map(m => m.id === optId ? { ...m, _failed: false } : m));
     try {
+      const body = JSON.stringify({ action: "send", chat_id: chat.id, ...payload });
+      console.log("[DOSEND] body_len=", body.length, "chat_id=", chat.id, "file_url=", payload.file_url);
       const res = await fetch(CHATS_URL, {
         method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ action: "send", chat_id: chat.id, ...payload }),
+        body,
       });
+      console.log("[DOSEND] status=", res.status);
       const data = await res.json();
+      console.log("[DOSEND] data=", JSON.stringify(data).slice(0, 200));
       if (data.message) {
         setMessages(prev => prev.map(m => m.id === optId ? { ...data.message, out: true } : m));
       } else {
         setMessages(prev => prev.map(m => m.id === optId ? { ...m, _failed: true } : m));
       }
-    } catch {
+    } catch (err) {
+      console.error("[DOSEND] catch error:", err);
       setMessages(prev => prev.map(m => m.id === optId ? { ...m, _failed: true } : m));
     }
   }
