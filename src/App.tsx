@@ -1344,12 +1344,15 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
       b64 = await fileToBase64(file);
     }
 
+    console.log("[UPLOAD] sending", { fileType, fileSize, b64len: b64.length, token: token ? "ok" : "MISSING" });
     const res = await fetch(CHATS_URL, {
       method: "POST",
       headers: apiHeaders(token),
       body: JSON.stringify({ action: "upload", file: b64, file_name: file.name, file_type: fileType }),
     });
+    console.log("[UPLOAD] response status", res.status);
     const data = await res.json();
+    console.log("[UPLOAD] response data", data);
     if (!data.file_url) throw new Error(data.error || "Не удалось загрузить файл");
     return { file_url: data.file_url, file_name: data.file_name || file.name, file_type: data.file_type || fileType, file_size: data.file_size || fileSize };
   }
