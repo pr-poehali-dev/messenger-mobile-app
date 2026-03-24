@@ -145,19 +145,33 @@ self.addEventListener("push", e => {
 // ── Клик по уведомлению ───────────────────────────────────────────────────────
 self.addEventListener("notificationclick", e => {
   e.notification.close();
-  if (e.action === "close") return;
+  if (e.action === "close") {
+    // Для звонков — "Закрыть" не означает ответ, просто скрываем уведомление
+    return;
+  }
 
-  const url = e.notification.data?.url || "/";
+  const notifData = e.notification.data || {};
+  const url = notifData.url || "/";
+  const isCall = notifData.type === "call";
+
   e.waitUntil(
     clients.matchAll({ type: "window", includeUncontrolled: true }).then(list => {
-      // Фокусируем существующую вкладку
       const existing = list.find(c => c.url.startsWith(self.location.origin));
       if (existing) {
         existing.focus();
-        existing.navigate(url);
+        // Если это звонок — сообщаем приложению немедленно проверить входящие
+        if (isCall) {
+          existing.postMessage({ type: "CALL_NOTIFICATION_CLICKED" });
+        }
         return;
       }
-      return clients.openWindow(url);
+      // Открываем приложение если закрыто
+      return clients.openWindow(url).then(client => {
+        if (client && isCall) {
+          // Небольшая задержка чтобы приложение успело инициализироваться
+          setTimeout(() => client.postMessage({ type: "CALL_NOTIFICATION_CLICKED" }), 2000);
+        }
+      });
     })
   );
 });

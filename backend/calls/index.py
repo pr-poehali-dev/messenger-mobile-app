@@ -2,12 +2,15 @@
 import json
 import os
 import psycopg2
+import traceback
 
 try:
     from pywebpush import webpush, WebPushException
     WEBPUSH_AVAILABLE = True
-except ImportError:
+    print("[push] pywebpush loaded OK")
+except ImportError as e:
     WEBPUSH_AVAILABLE = False
+    print(f"[push] pywebpush NOT available: {e}")
 
 SCHEMA = "t_p22534578_messenger_mobile_app"
 
@@ -102,9 +105,11 @@ def handler(event: dict, context) -> dict:
             conn.commit()
 
             # Push-уведомление о входящем звонке
+            print(f"[push] WEBPUSH_AVAILABLE={WEBPUSH_AVAILABLE}")
             if WEBPUSH_AVAILABLE:
-                vapid_private = os.environ.get("VAPID_PRIVATE_KEY")
-                vapid_public = os.environ.get("VAPID_PUBLIC_KEY")
+                vapid_private = os.environ.get("VAPID_PRIVATE_KEY", "")
+                vapid_public = os.environ.get("VAPID_PUBLIC_KEY", "")
+                print(f"[push] vapid_private len={len(vapid_private)} vapid_public len={len(vapid_public)}")
                 if vapid_private and vapid_public:
                     with conn.cursor() as cur:
                         cur.execute(f"""
@@ -113,6 +118,7 @@ def handler(event: dict, context) -> dict:
                             WHERE user_id = %s
                         """, (callee_id,))
                         subs = cur.fetchall()
+                    print(f"[push] found {len(subs)} subscriptions for user {callee_id}")
                     call_type = "📹 Видеозвонок" if is_video else "📞 Аудиозвонок"
                     push_data = json.dumps({
                         "title": user["name"],
@@ -122,6 +128,7 @@ def handler(event: dict, context) -> dict:
                         "call_id": call_id,
                         "url": "/",
                     })
+                    dead_endpoints = []
                     for endpoint, p256dh, auth_k in subs:
                         try:
                             webpush(
@@ -130,8 +137,24 @@ def handler(event: dict, context) -> dict:
                                 vapid_private_key=vapid_private,
                                 vapid_claims={"sub": "mailto:push@poehali.dev"},
                             )
-                        except WebPushException:
-                            pass
+                            print(f"[push] sent OK to {endpoint[:50]}")
+                        except WebPushException as ex:
+                            resp = ex.response
+                            status = resp.status_code if resp else 0
+                            body_text = resp.text if resp else ""
+                            print(f"[push] WebPushException status={status} body={body_text[:200]}: {ex}")
+                            if status in (404, 410):
+                                dead_endpoints.append(endpoint)
+                        except Exception as ex:
+                            print(f"[push] error: {traceback.format_exc()}")
+                    # Удаляем протухшие подписки
+                    for ep in dead_endpoints:
+                        with conn.cursor() as cur:
+                            cur.execute(f"DELETE FROM {SCHEMA}.push_subscriptions WHERE endpoint = %s", (ep,))
+                        conn.commit()
+                        print(f"[push] removed dead subscription: {ep[:50]}")
+                else:
+                    print("[push] VAPID keys missing — push not sent")
 
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"call_id": call_id})}
 

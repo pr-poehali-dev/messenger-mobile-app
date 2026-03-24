@@ -967,9 +967,9 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     });
   }
 
-  // Poll for new messages every 4s (не агрессивнее чем нужно)
+  // Poll for new messages every 6s
   useEffect(() => {
-    const id = setInterval(() => loadMessages(true), 4000);
+    const id = setInterval(() => loadMessages(true), 6000);
     return () => clearInterval(id);
   }, [loadMessages]);
 
@@ -983,7 +983,7 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
       } catch { /* ignore */ }
     };
     poll();
-    const id = setInterval(poll, 2000);
+    const id = setInterval(poll, 4000);
     return () => clearInterval(id);
   }, [chat.id, token]);
 
@@ -5680,16 +5680,18 @@ export default function App() {
     navigator.serviceWorker.register("/sw.js")
       .then(reg => {
         setSwReady(true);
-        // Слушаем сообщение SYNC_REQUIRED от SW
         navigator.serviceWorker.addEventListener("message", (e) => {
           if (e.data?.type === "SYNC_REQUIRED") {
             window.dispatchEvent(new CustomEvent("kasper:sync"));
           }
+          // SW сообщает что пользователь кликнул на уведомление о звонке
+          if (e.data?.type === "CALL_NOTIFICATION_CLICKED") {
+            window.dispatchEvent(new CustomEvent("kasper:check-incoming-call"));
+          }
         });
-        // Проверяем обновление каждые 60 сек
         setInterval(() => reg.update().catch(() => {}), 60_000);
       })
-      .catch(() => {}); // Ошибка регистрации SW — не критично
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -5922,7 +5924,8 @@ export default function App() {
 
   useEffect(() => {
     if (!token || !user) return;
-    const poll = setInterval(async () => {
+
+    async function checkIncoming() {
       if (activeCall) return;
       const res = await fetch(CALLS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "incoming" }) }).catch(() => null);
       if (!res) return;
@@ -5932,8 +5935,16 @@ export default function App() {
       } else {
         setIncomingCall(null);
       }
-    }, 3000);
-    return () => clearInterval(poll);
+    }
+
+    // Немедленная проверка при клике на уведомление о звонке
+    window.addEventListener("kasper:check-incoming-call", checkIncoming);
+
+    const poll = setInterval(checkIncoming, 5000);
+    return () => {
+      clearInterval(poll);
+      window.removeEventListener("kasper:check-incoming-call", checkIncoming);
+    };
   }, [token, user, activeCall]);
 
   const unreadCount = chatsForBadge.reduce((a, c) => a + (c.unread || 0), 0);

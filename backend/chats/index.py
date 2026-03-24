@@ -447,8 +447,8 @@ def handler(event: dict, context) -> dict:
 
             # Send push notifications to other chat members
             if WEBPUSH_AVAILABLE:
-                vapid_private = os.environ.get("VAPID_PRIVATE_KEY")
-                vapid_public = os.environ.get("VAPID_PUBLIC_KEY")
+                vapid_private = os.environ.get("VAPID_PRIVATE_KEY", "")
+                vapid_public = os.environ.get("VAPID_PUBLIC_KEY", "")
                 if vapid_private and vapid_public:
                     with conn.cursor() as cur:
                         cur.execute(f"""
@@ -461,6 +461,7 @@ def handler(event: dict, context) -> dict:
                         subs = cur.fetchall()
                     preview = (text or ("📎 Файл" if file_url else ""))[:80]
                     push_data = json.dumps({"title": user["name"], "body": preview, "tag": f"chat-{chat_id}"})
+                    dead_endpoints = []
                     for endpoint, p256dh, auth_k in subs:
                         try:
                             webpush(
@@ -469,8 +470,22 @@ def handler(event: dict, context) -> dict:
                                 vapid_private_key=vapid_private,
                                 vapid_claims={"sub": "mailto:push@poehali.dev"},
                             )
-                        except WebPushException:
-                            pass
+                        except WebPushException as ex:
+                            resp = ex.response
+                            status = resp.status_code if resp else 0
+                            print(f"[push-msg] WebPushException status={status}: {ex}")
+                            if status in (404, 410):
+                                dead_endpoints.append(endpoint)
+                        except Exception as ex:
+                            print(f"[push-msg] error: {ex}")
+                    # Удаляем протухшие подписки
+                    for ep in dead_endpoints:
+                        with conn.cursor() as cur:
+                            cur.execute(f"DELETE FROM {SCHEMA}.push_subscriptions WHERE endpoint = %s", (ep,))
+                        conn.commit()
+                        print(f"[push-msg] removed dead subscription: {ep[:50]}")
+                else:
+                    print("[push-msg] VAPID keys missing")
 
             return {
                 "statusCode": 200, "headers": cors,
