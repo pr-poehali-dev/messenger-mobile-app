@@ -4831,7 +4831,7 @@ function InstallAppButton() {
   );
 }
 
-function SettingsTab({ onLogout, onTestSound }: { onLogout: () => void; onTestSound: () => void }) {
+function SettingsTab({ onLogout, onTestSound, onNotifSettingsChange }: { onLogout: () => void; onTestSound: () => void; onNotifSettingsChange?: () => void }) {
   const [section, setSection] = useState<SettingsSection>("main");
   const [dark, setDark] = useState(() => localStorage.getItem("pulse_theme") !== "light");
   const [notifPerm, setNotifPerm] = useState<NotificationPermission>("Notification" in window ? Notification.permission : "denied");
@@ -4848,6 +4848,7 @@ function SettingsTab({ onLogout, onTestSound }: { onLogout: () => void; onTestSo
 
   // Notifications
   const [msgSound, setMsgSound] = useState(() => localStorage.getItem("s_msg_sound") !== "0");
+  const [bgNotif, setBgNotif] = useState(() => localStorage.getItem("s_bg_notif") !== "0");
   const [groupNotif, setGroupNotif] = useState(() => localStorage.getItem("s_group_notif") !== "0");
   const [callNotif, setCallNotif] = useState(() => localStorage.getItem("s_call_notif") !== "0");
   const [preview, setPreview] = useState(() => localStorage.getItem("s_preview") !== "0");
@@ -5013,16 +5014,20 @@ function SettingsTab({ onLogout, onTestSound }: { onLogout: () => void; onTestSo
 
               <div className="glass rounded-3xl overflow-hidden">
                 {[
-                  { icon: "MessageCircle", bg: "bg-blue-500/20", label: "Звук сообщений", val: msgSound, set: (v: boolean) => { setMsgSound(v); save("s_msg_sound", v); }, color: "text-blue-400" },
+                  { icon: "BellDot", bg: "bg-orange-500/20", label: "Уведомления в фоне", desc: "Получать уведомления когда приложение закрыто", val: bgNotif, set: (v: boolean) => { setBgNotif(v); save("s_bg_notif", v); onNotifSettingsChange?.(); }, color: "text-orange-400" },
+                  { icon: "MessageCircle", bg: "bg-blue-500/20", label: "Звук сообщений", val: msgSound, set: (v: boolean) => { setMsgSound(v); save("s_msg_sound", v); onNotifSettingsChange?.(); }, color: "text-blue-400" },
                   { icon: "Users", bg: "bg-purple-500/20", label: "Уведомления групп", val: groupNotif, set: (v: boolean) => { setGroupNotif(v); save("s_group_notif", v); }, color: "text-purple-400" },
                   { icon: "Phone", bg: "bg-green-500/20", label: "Уведомления о звонках", val: callNotif, set: (v: boolean) => { setCallNotif(v); save("s_call_notif", v); }, color: "text-green-400" },
-                  { icon: "Eye", bg: "bg-cyan-500/20", label: "Предпросмотр сообщений", val: preview, set: (v: boolean) => { setPreview(v); save("s_preview", v); }, color: "text-cyan-400" },
-                ].map(({ icon, bg, label, val, set, color }, i, arr) => (
+                  { icon: "Eye", bg: "bg-cyan-500/20", label: "Предпросмотр сообщений", val: preview, set: (v: boolean) => { setPreview(v); save("s_preview", v); onNotifSettingsChange?.(); }, color: "text-cyan-400" },
+                ].map(({ icon, bg, label, desc, val, set, color }, i, arr) => (
                   <div key={label} className={`flex items-center gap-3 px-4 py-3.5 ${i < arr.length - 1 ? "border-b border-white/5" : ""}`}>
                     <div className={`w-9 h-9 rounded-xl ${bg} flex items-center justify-center flex-shrink-0`}>
                       <Icon name={icon as Parameters<typeof Icon>[0]["name"]} size={16} className={color} />
                     </div>
-                    <span className="flex-1 text-sm font-medium text-foreground">{label}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-foreground">{label}</div>
+                      {desc && <div className="text-xs text-muted-foreground">{desc}</div>}
+                    </div>
                     <Toggle value={val} onChange={set} />
                   </div>
                 ))}
@@ -5733,6 +5738,21 @@ export default function App() {
       .finally(() => setAuthChecked(true));
   }, []);
 
+  // Синхронизируем настройки уведомлений с Service Worker
+  function syncNotifSettingsToSW() {
+    if (!("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.ready.then(reg => {
+      reg.active?.postMessage({
+        type: "UPDATE_NOTIF_SETTINGS",
+        settings: {
+          bg_notif: localStorage.getItem("s_bg_notif") !== "0",
+          preview: localStorage.getItem("s_preview") !== "0",
+          msg_sound: localStorage.getItem("s_msg_sound") !== "0",
+        },
+      });
+    }).catch(() => {});
+  }
+
   // Подписка на Push-уведомления (после логина + после регистрации SW)
   useEffect(() => {
     if (!token || !swReady || !("PushManager" in window)) return;
@@ -5745,6 +5765,10 @@ export default function App() {
         if (perm !== "granted") return;
 
         const reg = await navigator.serviceWorker.ready;
+
+        // Передаём актуальные настройки в SW
+        syncNotifSettingsToSW();
+
         const keyRes = await fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "vapid-public-key" }) });
         const keyData = await keyRes.json();
         if (!keyData.public_key) return;
@@ -5767,11 +5791,11 @@ export default function App() {
   }, [token, swReady]);
 
   const playSound = useCallback(() => {
+    if (localStorage.getItem("s_msg_sound") === "0") return;
     try {
       const AudioCtx = window.AudioContext || (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!AudioCtx) return;
       const ctx = new AudioCtx();
-      // Two-tone pop: short high note → short low note
       const notes = [
         { freq: 880, start: 0,    dur: 0.08, gain: 0.18 },
         { freq: 660, start: 0.09, dur: 0.12, gain: 0.12 },
@@ -5795,13 +5819,16 @@ export default function App() {
 
   const showNotification = useCallback((title: string, body: string) => {
     if (!("Notification" in window) || Notification.permission !== "granted") return;
+    if (localStorage.getItem("s_bg_notif") === "0") return;
     if (document.visibilityState === "visible") return;
+    const showPreview = localStorage.getItem("s_preview") !== "0";
     try {
       new Notification(title, {
-        body,
+        body: showPreview ? body : "Новое сообщение",
         icon: "/favicon.svg",
         tag: "pulse-message",
-        silent: false,
+        silent: localStorage.getItem("s_msg_sound") === "0",
+        renotify: true,
       });
     } catch { /* ignore */ }
   }, []);
@@ -5960,7 +5987,7 @@ export default function App() {
     contacts: <ContactsTab token={token} onCall={startCall} onOpenChat={openChatWith} />,
     calls: <CallsTab token={token} onCall={startCall} />,
     profile: <ProfileTab user={user} token={token} onLogout={handleLogout} onUserUpdate={u => { setUser(u); localStorage.setItem("pulse_user", JSON.stringify(u)); }} onDeleteAccount={handleLogout} />,
-    settings: <SettingsTab onLogout={handleLogout} onTestSound={playSound} />,
+    settings: <SettingsTab onLogout={handleLogout} onTestSound={playSound} onNotifSettingsChange={syncNotifSettingsToSW} />,
   };
 
   const NAV_ITEMS_DESKTOP = [

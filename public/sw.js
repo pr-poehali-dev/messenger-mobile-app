@@ -98,21 +98,36 @@ self.addEventListener("fetch", e => {
   );
 });
 
+// ── Настройки уведомлений (синхронизируются из приложения) ───────────────────
+let swSettings = { bg_notif: true, preview: true, msg_sound: true };
+
+self.addEventListener("message", e => {
+  if (e.data && e.data.type === "UPDATE_NOTIF_SETTINGS") {
+    Object.assign(swSettings, e.data.settings);
+  }
+});
+
 // ── Push: показываем уведомление ──────────────────────────────────────────────
 self.addEventListener("push", e => {
   if (!e.data) return;
+  if (!swSettings.bg_notif) return;
+
   let payload = {};
   try { payload = e.data.json(); } catch { payload = { title: "Каспер", body: e.data.text() }; }
 
+  const body = swSettings.preview ? (payload.body || "Новое сообщение") : "Новое сообщение";
+  const silent = !swSettings.msg_sound;
+
   e.waitUntil(
     self.registration.showNotification(payload.title || "Каспер", {
-      body: payload.body || "Новое сообщение",
+      body,
       icon: APP_ICON,
       badge: APP_ICON,
       tag: payload.tag || "kasper-msg",
       renotify: true,
+      silent,
       data: { url: payload.url || "/" },
-      vibrate: [100, 50, 100],
+      vibrate: silent ? [] : [100, 50, 100],
       actions: [
         { action: "open", title: "Открыть" },
         { action: "close", title: "Закрыть" },
