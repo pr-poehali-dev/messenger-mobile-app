@@ -38,6 +38,28 @@ def safe_int(val, default=0) -> int:
     except (TypeError, ValueError):
         return default
 
+def _send_missed_call_message(conn, caller_id: int, callee_id: int, is_video: bool):
+    """Создаёт системное сообщение о пропущенном звонке в личном чате двух пользователей"""
+    with conn.cursor() as cur:
+        cur.execute(f"""
+            SELECT cm1.chat_id FROM {SCHEMA}.chat_members cm1
+            JOIN {SCHEMA}.chat_members cm2 ON cm1.chat_id = cm2.chat_id
+            JOIN {SCHEMA}.chats c ON c.id = cm1.chat_id
+            WHERE cm1.user_id = %s AND cm2.user_id = %s AND c.is_group = FALSE
+            LIMIT 1
+        """, (caller_id, callee_id))
+        row = cur.fetchone()
+        if not row:
+            return
+        chat_id = row[0]
+        call_type = "видео" if is_video else "аудио"
+        text = f"Пропущенный {call_type}звонок"
+        cur.execute(f"""
+            INSERT INTO {SCHEMA}.messages (chat_id, sender_id, text, message_type)
+            VALUES (%s, %s, %s, 'missed_call')
+        """, (chat_id, caller_id, text))
+
+
 def handler(event: dict, context) -> dict:
     """Сервис звонков: аудио и видео через WebRTC"""
     cors = {
@@ -178,7 +200,11 @@ def handler(event: dict, context) -> dict:
                 cur.execute(f"""
                     UPDATE {SCHEMA}.calls SET status='declined', ended_at=NOW()
                     WHERE id=%s AND callee_id=%s AND status='ringing'
+                    RETURNING caller_id, callee_id, is_video
                 """, (call_id, uid))
+                row = cur.fetchone()
+            if row:
+                _send_missed_call_message(conn, row[0], row[1], bool(row[2]))
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
 
@@ -190,7 +216,11 @@ def handler(event: dict, context) -> dict:
                 cur.execute(f"""
                     UPDATE {SCHEMA}.calls SET status='ended', ended_at=NOW()
                     WHERE id=%s AND (caller_id=%s OR callee_id=%s) AND status IN ('ringing','active')
+                    RETURNING caller_id, callee_id, is_video, answered_at
                 """, (call_id, uid, uid))
+                row = cur.fetchone()
+            if row and row[3] is None:
+                _send_missed_call_message(conn, row[0], row[1], bool(row[2]))
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
 

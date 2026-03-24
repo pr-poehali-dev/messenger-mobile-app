@@ -54,6 +54,7 @@ interface Message {
   reply_to_id?: number | null;
   reply_to_text?: string | null;
   reply_to_name?: string | null;
+  message_type?: string | null;
   _failed?: boolean;
 }
 
@@ -2198,6 +2199,19 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
                 <div className="flex-1 h-px bg-white/8" />
               </div>
             )}
+            {msg.message_type === "missed_call" ? (
+              <div
+                ref={el => { msgRefs.current[msg.id] = el; }}
+                data-msg-id={msg.id}
+                className="flex justify-center animate-fade-in"
+                style={{ animationDelay: `${i * 0.02}s` }}>
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-red-500/15 border border-red-500/25 text-red-400 text-[11px]">
+                  <Icon name="PhoneMissed" size={12} />
+                  <span>{msg.text}</span>
+                  <span className="text-white/30 ml-1">{msg.time}</span>
+                </div>
+              </div>
+            ) : (
             <div
               ref={el => { msgRefs.current[msg.id] = el; }}
               data-msg-id={msg.id}
@@ -2399,7 +2413,8 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
               </div>
             )}
           </div>
-          </div>
+            )}
+            </div>
         );
         }
         )}
