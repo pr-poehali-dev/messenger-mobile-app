@@ -690,37 +690,29 @@ def handler(event: dict, context) -> dict:
             })}
 
         if action == "upload":
-            # ── Rate limit: не более 20 загрузок в час ──
-            with conn.cursor() as cur:
-                cur.execute(f"""
-                    SELECT COUNT(*) FROM {SCHEMA}.messages
-                    WHERE sender_id = %s AND file_url IS NOT NULL
-                      AND created_at > NOW() - INTERVAL '1 hour'
-                """, (user_id,))
-                if cur.fetchone()[0] >= 50:
-                    return {"statusCode": 429, "headers": cors, "body": json.dumps({"error": "Слишком много загрузок. Попробуйте позже"})}
-
+            import re as _re
             body = body_pre
             file_b64 = body.get("file") or body.get("file_data")
             file_name = (body.get("file_name") or "file").strip()[:255]
             file_type = (body.get("file_type") or "application/octet-stream").strip()[:100]
 
+            print(f"[UPLOAD] user_id={user_id} file_name={file_name} file_type={file_type} has_file={bool(file_b64)} b64_len={len(file_b64) if file_b64 else 0}")
+
             if not file_b64:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "file required"})}
 
-            # base64 может содержать data URL prefix — убираем
             if "," in file_b64:
                 file_b64 = file_b64.split(",", 1)[1]
 
             try:
                 file_data = base64.b64decode(file_b64)
             except Exception as e:
+                print(f"[UPLOAD] base64 decode error: {e}")
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": f"Некорректный файл: {e}"})}
 
             if not file_data:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Файл пуст"})}
 
-            # ── Строгий whitelist MIME-типов ──
             ALLOWED_MIME = {
                 "image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif",
                 "image/webp": ".webp", "image/heic": ".heic", "image/jpg": ".jpg",
@@ -740,32 +732,36 @@ def handler(event: dict, context) -> dict:
             file_type_base = file_type.split(";")[0].strip()
             resolved_type = file_type if file_type in ALLOWED_MIME else file_type_base
             if resolved_type not in ALLOWED_MIME:
+                print(f"[UPLOAD] MIME not allowed: {file_type} / resolved={resolved_type}")
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": f"Тип файла не разрешён: {file_type}"})}
 
             file_size = len(file_data)
             if file_size > 50 * 1024 * 1024:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Файл слишком большой (макс. 50 МБ)"})}
 
-            # ── Безопасное имя: только uuid, расширение из whitelist ──
             ext = ALLOWED_MIME.get(resolved_type, ".bin")
             key_name = f"{uuid.uuid4().hex}{ext}"
             key = f"chat-files/{key_name}"
-
-            import re as _re
             safe_display = _re.sub(r'[^\w.\-\s]', '_', file_name)[:100] or "file"
 
-            s3 = boto3.client(
-                "s3",
-                endpoint_url="https://bucket.poehali.dev",
-                aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
-                aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
-            )
-            s3.put_object(
-                Bucket="files", Key=key, Body=file_data,
-                ContentType=resolved_type,
-            )
+            print(f"[UPLOAD] uploading to S3: key={key} size={file_size} type={resolved_type}")
+            try:
+                s3 = boto3.client(
+                    "s3",
+                    endpoint_url="https://bucket.poehali.dev",
+                    aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+                    aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+                )
+                s3.put_object(
+                    Bucket="files", Key=key, Body=file_data,
+                    ContentType=resolved_type,
+                )
+            except Exception as e:
+                print(f"[UPLOAD] S3 error: {e}")
+                return {"statusCode": 500, "headers": cors, "body": json.dumps({"error": f"Ошибка загрузки файла: {e}"})}
+
             cdn_url = f"https://cdn.poehali.dev/projects/{os.environ['AWS_ACCESS_KEY_ID']}/bucket/{key}"
-            print(f"[UPLOAD OK] key={key} size={file_size} type={resolved_type}")
+            print(f"[UPLOAD OK] cdn_url={cdn_url}")
 
             return {
                 "statusCode": 200, "headers": cors,
@@ -773,7 +769,7 @@ def handler(event: dict, context) -> dict:
                     "file_url": cdn_url, "url": cdn_url,
                     "file_name": safe_display,
                     "file_size": file_size,
-                    "file_type": file_type,
+                    "file_type": resolved_type,
                 })
             }
 
