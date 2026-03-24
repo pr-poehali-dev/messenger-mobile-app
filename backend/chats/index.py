@@ -818,42 +818,14 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"chat_id": chat_id, "is_channel": is_channel})}
 
-        # typing POST — сообщить что пользователь печатает
-        # typing GET — кто сейчас печатает в чате
+        # typing — отправить или получить статус "печатает"
         if action == "typing":
-            if method == "POST" or body_pre.get("chat_id"):
-                body = body_pre
-                chat_id = body.get("chat_id")
-                if not chat_id:
-                    return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "chat_id required"})}
-                # If no text body (GET-style ping), return typists
-                if method == "GET":
-                    params = event.get("queryStringParameters") or {}
-                    chat_id = body_pre.get("chat_id") or params.get("chat_id")
-                    if not chat_id:
-                        return {"statusCode": 400, "headers": cors, "body": json.dumps({"typists": []})}
-                    with conn.cursor() as cur:
-                        cur.execute(f"""
-                            SELECT user_name FROM typing_status
-                            WHERE chat_id = %s AND user_id != %s
-                            AND updated_at > NOW() - INTERVAL '4 seconds'
-                        """, (chat_id, user_id))
-                        rows = cur.fetchall()
-                    typists = [r[0] for r in rows]
-                    return {"statusCode": 200, "headers": cors, "body": json.dumps({"typists": typists})}
-                with conn.cursor() as cur:
-                    cur.execute(f"""
-                        INSERT INTO typing_status (chat_id, user_id, user_name, updated_at)
-                        VALUES (%s, %s, %s, NOW())
-                        ON CONFLICT (chat_id, user_id) DO UPDATE SET updated_at = NOW()
-                    """, (chat_id, user_id, user["name"]))
-                conn.commit()
-                return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
-            else:
-                params = event.get("queryStringParameters") or {}
-                chat_id = body_pre.get("chat_id") or params.get("chat_id")
-                if not chat_id:
-                    return {"statusCode": 400, "headers": cors, "body": json.dumps({"typists": []})}
+            body = body_pre
+            chat_id = body.get("chat_id")
+            if not chat_id:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"typists": []})}
+            # get_typists=True — вернуть кто сейчас печатает
+            if body.get("get_typists"):
                 with conn.cursor() as cur:
                     cur.execute(f"""
                         SELECT user_name FROM typing_status
@@ -863,6 +835,15 @@ def handler(event: dict, context) -> dict:
                     rows = cur.fetchall()
                 typists = [r[0] for r in rows]
                 return {"statusCode": 200, "headers": cors, "body": json.dumps({"typists": typists})}
+            # иначе — записываем что пользователь сейчас печатает
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    INSERT INTO typing_status (chat_id, user_id, user_name, updated_at)
+                    VALUES (%s, %s, %s, NOW())
+                    ON CONFLICT (chat_id, user_id) DO UPDATE SET updated_at = NOW()
+                """, (chat_id, user_id, user["name"]))
+            conn.commit()
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
 
         # stats — статистика чата
         if action == "stats":

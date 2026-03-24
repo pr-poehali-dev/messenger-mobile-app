@@ -973,11 +973,11 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     return () => clearInterval(id);
   }, [loadMessages]);
 
-  // Poll typing status every 2s
+  // Poll typing status every 4s
   useEffect(() => {
     const poll = async () => {
       try {
-        const res = await fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "typing", chat_id: chat.id }) });
+        const res = await fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "typing", chat_id: chat.id, get_typists: true }) });
         const data = await res.json();
         setTypists(data.typists ?? []);
       } catch { /* ignore */ }
@@ -1359,12 +1359,8 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
     e.target.value = "";
     setUploadError(null);
 
-    if (file.size > 4 * 1024 * 1024 && !file.type.startsWith("image/")) {
-      setUploadError("Файл слишком большой. Для не-картинок максимум 4 МБ");
-      return;
-    }
-    if (file.size > 20 * 1024 * 1024) {
-      setUploadError("Файл слишком большой. Максимум 20 МБ");
+    if (file.size > 50 * 1024 * 1024) {
+      setUploadError("Файл слишком большой. Максимум 50 МБ");
       return;
     }
 
@@ -5953,7 +5949,7 @@ export default function App() {
   async function acceptCall(session: CallSession) {
     if (!token) return;
     await fetch(CALLS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "answer", call_id: session.callId }) });
-    setActiveCall({ ...session, status: "ringing" });
+    setActiveCall({ ...session, status: "active" });
     setIncomingCall(null);
   }
 
@@ -5981,7 +5977,7 @@ export default function App() {
     // Немедленная проверка при клике на уведомление о звонке
     window.addEventListener("kasper:check-incoming-call", checkIncoming);
 
-    const poll = setInterval(checkIncoming, 5000);
+    const poll = setInterval(checkIncoming, 2000);
     return () => {
       clearInterval(poll);
       window.removeEventListener("kasper:check-incoming-call", checkIncoming);
