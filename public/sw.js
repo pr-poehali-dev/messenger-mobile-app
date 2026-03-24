@@ -1,6 +1,6 @@
 // ─── Каспер Service Worker ────────────────────────────────────────────────────
 // Обновляй BUILD_TIME при каждом деплое чтобы инвалидировать кэш у всех
-const BUILD_TIME = "20260323-v4";
+const BUILD_TIME = "20260324-v5";
 const CACHE_APP = `kasper-app-${BUILD_TIME}`;
 const CACHE_ASSETS = `kasper-assets-${BUILD_TIME}`;
 const APP_ICON = "https://cdn.poehali.dev/projects/84792fb2-1985-42c4-8056-a4e27799a11a/bucket/2069fcb7-f721-4674-b0d8-51603e738767.png";
@@ -110,30 +110,36 @@ self.addEventListener("message", e => {
 // ── Push: показываем уведомление ──────────────────────────────────────────────
 self.addEventListener("push", e => {
   if (!e.data) return;
-  if (!swSettings.bg_notif) return;
 
   let payload = {};
   try { payload = e.data.json(); } catch { payload = { title: "Каспер", body: e.data.text() }; }
 
-  const body = swSettings.preview ? (payload.body || "Новое сообщение") : "Новое сообщение";
-  const silent = !swSettings.msg_sound;
+  const isCall = payload.type === "call";
 
-  e.waitUntil(
-    self.registration.showNotification(payload.title || "Каспер", {
-      body,
-      icon: APP_ICON,
-      badge: APP_ICON,
-      tag: payload.tag || "kasper-msg",
-      renotify: true,
-      silent,
-      data: { url: payload.url || "/" },
-      vibrate: silent ? [] : [100, 50, 100],
-      actions: [
-        { action: "open", title: "Открыть" },
-        { action: "close", title: "Закрыть" },
-      ],
-    })
-  );
+  // Фоновые уведомления сообщений можно отключить, звонки — никогда
+  if (!isCall && !swSettings.bg_notif) return;
+
+  const silent = !swSettings.msg_sound && !isCall;
+  const body = (!isCall && !swSettings.preview) ? "Новое сообщение" : (payload.body || "Новое сообщение");
+
+  const notifOptions = {
+    body,
+    icon: APP_ICON,
+    badge: APP_ICON,
+    tag: payload.tag || "kasper-msg",
+    renotify: true,
+    silent,
+    data: { url: payload.url || "/", type: payload.type || "message" },
+    vibrate: isCall ? [300, 100, 300, 100, 300] : (silent ? [] : [100, 50, 100]),
+    actions: isCall
+      ? [{ action: "open", title: "Ответить" }, { action: "close", title: "Отклонить" }]
+      : [{ action: "open", title: "Открыть" }, { action: "close", title: "Закрыть" }],
+  };
+
+  // Звонки держим на экране пока пользователь не отреагирует
+  if (isCall) notifOptions.requireInteraction = true;
+
+  e.waitUntil(self.registration.showNotification(payload.title || "Каспер", notifOptions));
 });
 
 // ── Клик по уведомлению ───────────────────────────────────────────────────────

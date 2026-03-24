@@ -3,6 +3,12 @@ import json
 import os
 import psycopg2
 
+try:
+    from pywebpush import webpush, WebPushException
+    WEBPUSH_AVAILABLE = True
+except ImportError:
+    WEBPUSH_AVAILABLE = False
+
 SCHEMA = "t_p22534578_messenger_mobile_app"
 
 def get_conn():
@@ -94,6 +100,39 @@ def handler(event: dict, context) -> dict:
                 """, (uid, callee_id, is_video))
                 call_id = cur.fetchone()[0]
             conn.commit()
+
+            # Push-уведомление о входящем звонке
+            if WEBPUSH_AVAILABLE:
+                vapid_private = os.environ.get("VAPID_PRIVATE_KEY")
+                vapid_public = os.environ.get("VAPID_PUBLIC_KEY")
+                if vapid_private and vapid_public:
+                    with conn.cursor() as cur:
+                        cur.execute(f"""
+                            SELECT endpoint, p256dh, auth
+                            FROM {SCHEMA}.push_subscriptions
+                            WHERE user_id = %s
+                        """, (callee_id,))
+                        subs = cur.fetchall()
+                    call_type = "📹 Видеозвонок" if is_video else "📞 Аудиозвонок"
+                    push_data = json.dumps({
+                        "title": user["name"],
+                        "body": call_type,
+                        "tag": f"call-{call_id}",
+                        "type": "call",
+                        "call_id": call_id,
+                        "url": "/",
+                    })
+                    for endpoint, p256dh, auth_k in subs:
+                        try:
+                            webpush(
+                                subscription_info={"endpoint": endpoint, "keys": {"p256dh": p256dh, "auth": auth_k}},
+                                data=push_data,
+                                vapid_private_key=vapid_private,
+                                vapid_claims={"sub": "mailto:push@poehali.dev"},
+                            )
+                        except WebPushException:
+                            pass
+
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"call_id": call_id})}
 
         # POST /answer — ответить на звонок
