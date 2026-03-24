@@ -10,6 +10,7 @@ interface BeforeInstallPromptEvent extends Event {
 const AUTH_URL = "https://functions.poehali.dev/7f5e5202-ad61-4f31-8181-6393be10b3ed";
 const CHATS_URL = "https://functions.poehali.dev/a33600bd-358e-45e6-a8d5-4e32707a3ef1";
 const CALLS_URL = "https://functions.poehali.dev/ec19ea73-ee73-48c3-a4cc-a6104054ed8e";
+const UPLOAD_URL = "https://functions.poehali.dev/94137de6-0af9-462e-9a02-54ec0f6bb061";
 
 function apiHeaders(token?: string | null) {
   const h: Record<string, string> = { "Content-Type": "application/json" };
@@ -1331,40 +1332,31 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
   }
 
   async function uploadFileDirect(file: File): Promise<{ file_url: string; file_name: string; file_type: string; file_size: number }> {
-    let uploadBlob: Blob = file;
+    let b64: string;
     let fileType = file.type || "application/octet-stream";
     let fileSize = file.size;
 
     if (file.type.startsWith("image/") && file.size > 200 * 1024) {
       const { blob, type } = await resizeImage(file);
-      uploadBlob = blob;
+      b64 = await fileToBase64(blob);
       fileType = type;
       fileSize = blob.size;
+    } else {
+      b64 = await fileToBase64(file);
     }
 
-    // Шаг 1: получаем presigned URL от бэкенда
-    const presignRes = await fetch(CHATS_URL, {
+    const res = await fetch(UPLOAD_URL, {
       method: "POST",
       headers: apiHeaders(token),
-      body: JSON.stringify({ action: "presigned-url", file_name: file.name, file_type: fileType, file_size: fileSize }),
+      body: JSON.stringify({ action: "upload", file: b64, file_name: file.name, file_type: fileType }),
     });
-    const presignData = await presignRes.json();
-    if (!presignData.upload_url) throw new Error(presignData.error || "Не удалось получить URL загрузки");
-
-    // Шаг 2: загружаем файл напрямую в S3
-    const uploadRes = await fetch(presignData.upload_url, {
-      method: "PUT",
-      headers: { "Content-Type": fileType },
-      body: uploadBlob,
-    });
-    if (!uploadRes.ok) throw new Error("Ошибка загрузки файла в хранилище");
-
-    return {
-      file_url: presignData.file_url,
-      file_name: presignData.file_name || file.name,
-      file_type: presignData.file_type || fileType,
-      file_size: fileSize,
-    };
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error((errData as {error?: string}).error || `Ошибка сервера: ${res.status}`);
+    }
+    const data = await res.json();
+    if (!data.file_url) throw new Error(data.error || "Не удалось загрузить файл");
+    return { file_url: data.file_url, file_name: data.file_name || file.name, file_type: data.file_type || fileType, file_size: data.file_size || fileSize };
   }
 
   async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
