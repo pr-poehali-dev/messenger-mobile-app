@@ -416,6 +416,26 @@ def handler(event: dict, context) -> dict:
 
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"calls": calls})}
 
+        # GET/POST missed-count — количество непросмотренных пропущенных звонков
+        if action == "missed-count":
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT COUNT(*) FROM {SCHEMA}.calls
+                    WHERE callee_id = %s AND status = 'missed' AND viewed = FALSE
+                """, (uid,))
+                count = cur.fetchone()[0]
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"count": count})}
+
+        # POST mark-viewed — отметить все пропущенные звонки пользователя как просмотренные
+        if action == "mark-viewed":
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    UPDATE {SCHEMA}.calls SET viewed = TRUE
+                    WHERE callee_id = %s AND status = 'missed' AND viewed = FALSE
+                """, (uid,))
+            conn.commit()
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
+
         return {"statusCode": 404, "headers": cors, "body": json.dumps({"error": "Not found"})}
 
     finally:

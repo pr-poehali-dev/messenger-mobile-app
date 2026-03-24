@@ -5693,7 +5693,7 @@ function PinScreen({ mode, onSuccess, onCancel }: {
 
 // ─── Bottom Nav Bar ───────────────────────────────────────────────────────────
 
-function AppBottomNav({ active, onChange, unreadCount }: { active: Tab; onChange: (t: Tab) => void; unreadCount: number }) {
+function AppBottomNav({ active, onChange, unreadCount, missedCallsCount }: { active: Tab; onChange: (t: Tab) => void; unreadCount: number; missedCallsCount: number }) {
   const items: { tab: Tab; icon: string; label: string }[] = [
     { tab: "chats", icon: "MessageCircle", label: "Чаты" },
     { tab: "contacts", icon: "Users", label: "Контакты" },
@@ -5713,6 +5713,11 @@ function AppBottomNav({ active, onChange, unreadCount }: { active: Tab; onChange
             {tab === "chats" && unreadCount > 0 && (
               <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-blue-600 text-white text-[10px] font-bold flex items-center justify-center">
                 {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
+            )}
+            {tab === "calls" && missedCallsCount > 0 && active !== "calls" && (
+              <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+                {missedCallsCount > 99 ? "99+" : missedCallsCount}
               </span>
             )}
           </div>
@@ -5783,6 +5788,7 @@ export default function App() {
   });
   const [tab, setTab] = useState<Tab>("chats");
   const [chatsForBadge, setChatsForBadge] = useState<{ unread: number }[]>([]);
+  const [missedCallsCount, setMissedCallsCount] = useState(0);
   const [authChecked, setAuthChecked] = useState(false);
   const [pinUnlocked, setPinUnlocked] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -6073,6 +6079,29 @@ export default function App() {
 
   const unreadCount = chatsForBadge.reduce((a, c) => a + (c.unread || 0), 0);
 
+  // ── Polling счётчика пропущенных звонков ──
+  useEffect(() => {
+    if (!token || !user) return;
+    const fetchMissed = () => {
+      fetch(CALLS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "missed-count" }) })
+        .then(r => r.json())
+        .then(d => { if (typeof d.count === "number") setMissedCallsCount(d.count); })
+        .catch(() => {});
+    };
+    fetchMissed();
+    const interval = setInterval(fetchMissed, 15000);
+    return () => clearInterval(interval);
+  }, [token, user]);
+
+  // ── Сброс счётчика при открытии вкладки звонков ──
+  const handleTabChange = (t: Tab) => {
+    setTab(t);
+    if (t === "calls" && missedCallsCount > 0) {
+      setMissedCallsCount(0);
+      fetch(CALLS_URL, { method: "POST", headers: apiHeaders(token!), body: JSON.stringify({ action: "mark-viewed" }) }).catch(() => {});
+    }
+  };
+
   if (!authChecked) {
     return (
       <div className="flex items-center justify-center h-screen" style={{ background: "hsl(var(--background))" }}>
@@ -6150,7 +6179,7 @@ export default function App() {
       {/* ── МОБИЛЬНЫЙ режим (< md) ── */}
       <div className="flex flex-col flex-1 overflow-hidden md:hidden">
         <div className="flex-1 overflow-hidden relative z-10">{tabs[tab]}</div>
-        <AppBottomNav active={tab} onChange={setTab} unreadCount={unreadCount} />
+        <AppBottomNav active={tab} onChange={handleTabChange} unreadCount={unreadCount} missedCallsCount={missedCallsCount} />
       </div>
 
       {/* ── ДЕСКТОПНЫЙ режим (≥ md) ── */}
@@ -6165,7 +6194,7 @@ export default function App() {
           </div>
           <nav className="flex flex-col items-center gap-1 py-3 flex-1">
             {NAV_ITEMS_DESKTOP.map(({ tab: t, icon, label }) => (
-              <button key={t} onClick={() => setTab(t)}
+              <button key={t} onClick={() => handleTabChange(t)}
                 title={label}
                 className={`relative w-12 h-12 rounded-2xl flex items-center justify-center transition-all
                   ${tab === t
@@ -6175,6 +6204,11 @@ export default function App() {
                 {t === "chats" && unreadCount > 0 && tab !== "chats" && (
                   <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">
                     {unreadCount > 99 ? "99+" : unreadCount}
+                  </span>
+                )}
+                {t === "calls" && missedCallsCount > 0 && tab !== "calls" && (
+                  <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">
+                    {missedCallsCount > 99 ? "99+" : missedCallsCount}
                   </span>
                 )}
               </button>
