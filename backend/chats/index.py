@@ -49,11 +49,17 @@ def handler(event: dict, context) -> dict:
              headers.get("X-authorization") or headers.get("x-authorization") or "")
 
     body_raw = event.get("body") or "{}"
+    if event.get("isBase64Encoded"):
+        import base64 as _b64
+        body_raw = _b64.b64decode(body_raw).decode("utf-8", errors="replace")
+    print(f"[HANDLER] method={method} path={path} body_len={len(body_raw)} isB64={event.get('isBase64Encoded')}")
     try:
         body_pre = json.loads(body_raw)
-    except:
+    except Exception as parse_err:
+        print(f"[HANDLER] body parse error: {parse_err} body_start={body_raw[:200]}")
         body_pre = {}
     action = body_pre.get("action", "") or path.strip("/").split("/")[-1]
+    print(f"[HANDLER] action={action} token={'ok' if token else 'MISSING'}")
     is_multipart = False
 
     conn = get_conn()

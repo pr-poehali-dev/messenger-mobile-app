@@ -1331,30 +1331,40 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
   }
 
   async function uploadFileDirect(file: File): Promise<{ file_url: string; file_name: string; file_type: string; file_size: number }> {
-    let b64: string;
+    let uploadBlob: Blob = file;
     let fileType = file.type || "application/octet-stream";
     let fileSize = file.size;
 
     if (file.type.startsWith("image/") && file.size > 200 * 1024) {
       const { blob, type } = await resizeImage(file);
-      b64 = await fileToBase64(blob);
+      uploadBlob = blob;
       fileType = type;
       fileSize = blob.size;
-    } else {
-      b64 = await fileToBase64(file);
     }
 
-    console.log("[UPLOAD] sending", { fileType, fileSize, b64len: b64.length, token: token ? "ok" : "MISSING" });
-    const res = await fetch(CHATS_URL, {
+    // Шаг 1: получаем presigned URL от бэкенда
+    const presignRes = await fetch(CHATS_URL, {
       method: "POST",
       headers: apiHeaders(token),
-      body: JSON.stringify({ action: "upload", file: b64, file_name: file.name, file_type: fileType }),
+      body: JSON.stringify({ action: "presigned-url", file_name: file.name, file_type: fileType, file_size: fileSize }),
     });
-    console.log("[UPLOAD] response status", res.status);
-    const data = await res.json();
-    console.log("[UPLOAD] response data", data);
-    if (!data.file_url) throw new Error(data.error || "Не удалось загрузить файл");
-    return { file_url: data.file_url, file_name: data.file_name || file.name, file_type: data.file_type || fileType, file_size: data.file_size || fileSize };
+    const presignData = await presignRes.json();
+    if (!presignData.upload_url) throw new Error(presignData.error || "Не удалось получить URL загрузки");
+
+    // Шаг 2: загружаем файл напрямую в S3
+    const uploadRes = await fetch(presignData.upload_url, {
+      method: "PUT",
+      headers: { "Content-Type": fileType },
+      body: uploadBlob,
+    });
+    if (!uploadRes.ok) throw new Error("Ошибка загрузки файла в хранилище");
+
+    return {
+      file_url: presignData.file_url,
+      file_name: presignData.file_name || file.name,
+      file_type: presignData.file_type || fileType,
+      file_size: fileSize,
+    };
   }
 
   async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
