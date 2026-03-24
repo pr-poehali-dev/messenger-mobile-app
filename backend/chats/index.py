@@ -22,14 +22,14 @@ def auth_user(conn, token: str):
         return None
     with conn.cursor() as cur:
         cur.execute(f"""
-            SELECT u.id, u.name, u.phone, u.bio, u.status
+            SELECT u.id, u.name, u.phone, u.bio, u.status, u.avatar_url
             FROM {SCHEMA}.sessions s
             JOIN {SCHEMA}.users u ON u.id = s.user_id
             WHERE s.token = %s AND s.expires_at > NOW()
         """, (token,))
         row = cur.fetchone()
         if row:
-            return {"id": row[0], "name": row[1], "phone": row[2], "bio": row[3], "status": row[4]}
+            return {"id": row[0], "name": row[1], "phone": row[2], "bio": row[3], "status": row[4], "avatar_url": row[5]}
     return None
 
 def handler(event: dict, context) -> dict:

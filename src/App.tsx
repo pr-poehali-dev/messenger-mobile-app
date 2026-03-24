@@ -19,7 +19,7 @@ function apiHeaders(token?: string | null) {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Tab = "chats" | "contacts" | "calls" | "profile" | "settings";
+type Tab = "chats" | "contacts" | "calls" | "status" | "profile" | "settings";
 type UserRole = "admin" | "member" | "moderator";
 
 interface User {
@@ -4311,9 +4311,46 @@ function CallsTab({ token, onCall }: { token: string; onCall: (userId: number, u
   );
 }
 
-function StatusTab({ user }: { user: User }) {
+function StatusTab({ user, token }: { user: User; token: string | null }) {
   const [posting, setPosting] = useState(false);
-  const [myText, setMyText] = useState("");
+  const [myText, setMyText] = useState(user.bio || "");
+  const [saving, setSaving] = useState(false);
+  const [contacts, setContacts] = useState<{ id: number; name: string; status: string | null; avatar_url: string | null; bio?: string }[]>([]);
+
+  useEffect(() => {
+    if (!token) return;
+    fetch(AUTH_URL, {
+      method: "POST",
+      headers: apiHeaders(token),
+      body: JSON.stringify({ action: "contacts" }),
+    })
+      .then(r => r.json())
+      .then(d => {
+        if (d.contacts) {
+          setContacts(d.contacts.filter((c: { user_id: number | null }) => c.user_id !== null));
+        }
+      })
+      .catch(() => {});
+  }, [token]);
+
+  const handlePublish = async () => {
+    if (!token || !myText.trim()) return;
+    setSaving(true);
+    try {
+      const res = await fetch(AUTH_URL, {
+        method: "POST",
+        headers: apiHeaders(token),
+        body: JSON.stringify({ action: "update-profile", name: user.name, bio: myText.trim() }),
+      });
+      const data = await res.json();
+      if (data.user) {
+        setPosting(false);
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 pt-4 pb-3">
@@ -4321,11 +4358,11 @@ function StatusTab({ user }: { user: User }) {
         <div className="glass rounded-3xl p-4 mb-3">
           <div className="flex items-center gap-3">
             <div className="p-0.5 rounded-full bg-gradient-to-br from-blue-500 to-cyan-400">
-              <div className="p-0.5 rounded-full bg-background"><AvatarEl name={user.name} size="sm" /></div>
+              <div className="p-0.5 rounded-full bg-background"><AvatarEl name={user.name} size="sm" avatarUrl={user.avatar_url} /></div>
             </div>
             <div className="flex-1">
               <div className="font-golos font-semibold text-sm text-foreground">Мой статус</div>
-              <div className="text-xs text-muted-foreground">Добавить обновление</div>
+              <div className="text-xs text-muted-foreground">{user.bio || "Добавить обновление"}</div>
             </div>
             <button onClick={() => setPosting(!posting)}
               className="p-2.5 rounded-full bg-gradient-to-br from-blue-600 to-blue-700 hover:scale-105 transition-all">
@@ -4337,27 +4374,31 @@ function StatusTab({ user }: { user: User }) {
               <textarea value={myText} onChange={e => setMyText(e.target.value)}
                 placeholder="Что у вас происходит?" rows={2}
                 className="w-full bg-secondary/60 border border-white/10 rounded-2xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:border-sky-500/50 transition-all mb-2" />
-              <button className="w-full py-2.5 rounded-2xl bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm font-semibold">
-                Опубликовать
+              <button onClick={handlePublish} disabled={saving || !myText.trim()}
+                className="w-full py-2.5 rounded-2xl bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm font-semibold disabled:opacity-50 transition-opacity">
+                {saving ? "Сохранение..." : "Опубликовать"}
               </button>
             </div>
           )}
         </div>
       </div>
       <div className="flex-1 overflow-y-auto scroll-container px-4">
-        <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">Обновления</div>
+        <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-3">Контакты в сети</div>
         <div className="space-y-3">
-          {MOCK_STATUSES.map((s, i) => (
-            <div key={s.id} className="flex items-center gap-3 animate-fade-in" style={{ animationDelay: `${i * 0.06}s` }}>
-              <div className={`p-0.5 rounded-full bg-gradient-to-br ${s.color} ${s.viewed ? "opacity-40" : ""}`}>
-                <div className="p-0.5 rounded-full bg-background"><AvatarEl name={s.name} size="md" /></div>
+          {contacts.length === 0 && (
+            <div className="text-center text-muted-foreground text-sm py-8">Нет контактов в системе</div>
+          )}
+          {contacts.map((c, i) => (
+            <div key={c.id} className="flex items-center gap-3 animate-fade-in" style={{ animationDelay: `${i * 0.06}s` }}>
+              <div className={`p-0.5 rounded-full bg-gradient-to-br ${AVATAR_COLORS[i % AVATAR_COLORS.length]}`}>
+                <div className="p-0.5 rounded-full bg-background"><AvatarEl name={c.name} size="md" avatarUrl={c.avatar_url} /></div>
               </div>
               <div className="flex-1 min-w-0">
-                <div className="font-golos font-semibold text-foreground text-sm">{s.name}</div>
-                {s.text && <div className="text-xs text-muted-foreground truncate">{s.text}</div>}
-                <div className="text-xs text-muted-foreground">{s.time} назад</div>
+                <div className="font-golos font-semibold text-foreground text-sm">{c.name}</div>
+                {c.bio && <div className="text-xs text-muted-foreground truncate">{c.bio}</div>}
+                <div className="text-xs text-muted-foreground">{c.status === "online" ? "В сети" : "Не в сети"}</div>
               </div>
-              {!s.viewed && <div className="w-2 h-2 rounded-full bg-sky-400 animate-pulse-dot flex-shrink-0" />}
+              {c.status === "online" && <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse-dot flex-shrink-0" />}
             </div>
           ))}
         </div>
@@ -5997,6 +6038,7 @@ export default function App() {
     }} />,
     contacts: <ContactsTab token={token} onCall={startCall} onOpenChat={openChatWith} />,
     calls: <CallsTab token={token} onCall={startCall} />,
+    status: <StatusTab user={user} token={token} />,
     profile: <ProfileTab user={user} token={token} onLogout={handleLogout} onUserUpdate={u => { setUser(u); localStorage.setItem("pulse_user", JSON.stringify(u)); }} onDeleteAccount={handleLogout} />,
     settings: <SettingsTab onLogout={handleLogout} onTestSound={playSound} onNotifSettingsChange={syncNotifSettingsToSW} />,
   };
@@ -6005,6 +6047,7 @@ export default function App() {
     { tab: "chats" as Tab, icon: "MessageCircle", label: "Чаты" },
     { tab: "contacts" as Tab, icon: "Users", label: "Контакты" },
     { tab: "calls" as Tab, icon: "Phone", label: "Звонки" },
+    { tab: "status" as Tab, icon: "Circle", label: "Статус" },
     { tab: "profile" as Tab, icon: "User", label: "Профиль" },
     { tab: "settings" as Tab, icon: "Settings", label: "Настройки" },
   ];
