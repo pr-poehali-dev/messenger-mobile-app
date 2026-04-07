@@ -6112,26 +6112,36 @@ function AppBottomNav({ active, onChange, unreadCount, missedCallsCount }: { act
     { tab: "settings", icon: "Settings", label: "Настройки" },
   ];
   return (
-    <div className="flex-shrink-0 glass border-t border-white/5 flex items-center justify-around px-2 pb-safe"
-      style={{ paddingBottom: "max(env(safe-area-inset-bottom), 8px)", paddingTop: 6 }}>
+    <div
+      className="flex-shrink-0 glass border-t border-white/5 flex items-center justify-around"
+      style={{
+        paddingLeft: "max(env(safe-area-inset-left), 4px)",
+        paddingRight: "max(env(safe-area-inset-right), 4px)",
+        paddingTop: 4,
+        paddingBottom: "max(env(safe-area-inset-bottom), 6px)",
+      }}>
       {items.map(({ tab, icon, label }) => (
         <button key={tab} onClick={() => onChange(tab)}
-          className={`relative flex flex-col items-center gap-0.5 px-3 py-1 rounded-2xl transition-all min-w-0
-            ${active === tab ? "text-sky-400" : "text-muted-foreground hover:text-foreground"}`}>
+          className={`relative flex flex-col items-center justify-center gap-0.5 rounded-2xl transition-all flex-1
+            ${active === tab ? "text-sky-400" : "text-muted-foreground hover:text-foreground"}`}
+          style={{ minHeight: 44, minWidth: 44 }}>
           <div className="relative">
             <Icon name={icon as Parameters<typeof Icon>[0]["name"]} size={22} />
             {tab === "chats" && unreadCount > 0 && (
-              <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-blue-600 text-white text-[10px] font-bold flex items-center justify-center">
+              <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-blue-600 text-white text-[10px] font-bold flex items-center justify-center leading-none">
                 {unreadCount > 99 ? "99+" : unreadCount}
               </span>
             )}
             {tab === "calls" && missedCallsCount > 0 && active !== "calls" && (
-              <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+              <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center leading-none">
                 {missedCallsCount > 99 ? "99+" : missedCallsCount}
               </span>
             )}
           </div>
-          <span className="text-[10px] font-medium truncate">{label}</span>
+          <span className="nav-label-xs nav-label-landscape font-medium truncate max-w-full"
+            style={{ fontSize: "clamp(9px, 2.5vw, 11px)" }}>
+            {label}
+          </span>
           {active === tab && (
             <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-sky-400" />
           )}
@@ -6593,7 +6603,7 @@ export default function App() {
 
   return (
     <div className="flex h-[100dvh] font-rubik overflow-hidden relative"
-      style={{ background: "hsl(var(--background))" }}>
+      style={{ background: "hsl(var(--background))", overflowX: "hidden", maxWidth: "100vw" }}>
 
       {/* Декоративный фон */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
