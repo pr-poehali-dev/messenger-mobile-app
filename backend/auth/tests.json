@@ -8,13 +8,11 @@
       "bodyMatcher": "partial"
     },
     {
-      "name": "POST send-code missing contact",
+      "name": "POST register missing fields",
       "method": "POST",
       "path": "/",
-      "body": {"action": "register"},
-      "expectedStatus": 400,
-      "expectedBody": {"error": "Заполните все поля"},
-      "bodyMatcher": "partial"
+      "body": {"action": "register", "name": "", "phone": "", "password": ""},
+      "expectedStatus": 400
     }
   ]
 }

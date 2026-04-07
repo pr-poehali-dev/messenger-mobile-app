@@ -497,27 +497,51 @@ def handler(event: dict, context) -> dict:
             body = body_pre
             name = body.get("name", "").strip()
             phone = body.get("phone", "").strip()
-            if not name or not phone:
-                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Укажите имя и номер"})}
+            email = body.get("email", "").strip()
+            peer_id = body.get("peer_id")  # добавление по ID пользователя (из чата)
+
+            if not name:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Укажите имя"})}
+
+            contact_user_id = None
+            status = None; avatar_url = None
+
+            # Если передан peer_id — получаем телефон из профиля пользователя
+            if peer_id:
+                with conn.cursor() as cur:
+                    cur.execute(f"SELECT id, phone, status, avatar_url FROM {SCHEMA}.users WHERE id = %s", (peer_id,))
+                    r = cur.fetchone()
+                    if r:
+                        contact_user_id = r[0]
+                        phone = phone or (r[1] or "")
+                        status = r[2]; avatar_url = r[3]
+            elif phone:
+                with conn.cursor() as cur:
+                    cur.execute(f"SELECT id FROM {SCHEMA}.users WHERE phone = %s", (phone,))
+                    found = cur.fetchone()
+                    contact_user_id = found[0] if found else None
+
+            if not phone and not contact_user_id:
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "Укажите номер телефона или email"})}
+
+            # Используем email как phone-placeholder если телефон не указан
+            phone_key = phone if phone else (email or f"email:{email}")
+
             with conn.cursor() as cur:
-                cur.execute(f"SELECT id FROM {SCHEMA}.users WHERE phone = %s", (phone,))
-                found = cur.fetchone()
-                contact_user_id = found[0] if found else None
                 cur.execute(f"""
                     INSERT INTO {SCHEMA}.contacts (owner_id, contact_user_id, name, phone)
                     VALUES (%s, %s, %s, %s)
                     ON CONFLICT (owner_id, phone) DO UPDATE SET name = EXCLUDED.name, contact_user_id = EXCLUDED.contact_user_id
                     RETURNING id
-                """, (user["id"], contact_user_id, name, phone))
+                """, (user["id"], contact_user_id, name, phone_key))
                 contact_id = cur.fetchone()[0]
             conn.commit()
-            status = None; avatar_url = None
-            if contact_user_id:
+            if contact_user_id and not status:
                 with conn.cursor() as cur:
                     cur.execute(f"SELECT status, avatar_url FROM {SCHEMA}.users WHERE id = %s", (contact_user_id,))
                     r = cur.fetchone()
                     if r: status, avatar_url = r
-            return {"statusCode": 200, "headers": cors, "body": json.dumps({"contact": {"id": contact_id, "name": name, "phone": phone, "user_id": contact_user_id, "status": status, "avatar_url": avatar_url}})}
+            return {"statusCode": 200, "headers": cors, "body": json.dumps({"contact": {"id": contact_id, "name": name, "phone": phone_key, "user_id": contact_user_id, "status": status, "avatar_url": avatar_url}})}
 
         # POST /contacts/sync
         if action == "contacts/sync":

@@ -718,8 +718,8 @@ function VoicePlayer({ src, isOut, isRead, msgId, token, onRead }: {
 
 // ─── Chat Screen ──────────────────────────────────────────────────────────────
 
-function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRead, initialMsgId, onCall, onChatUpdate }: {
-  chat: Chat; token: string; currentUserId: number; onBack: () => void; allChats: Chat[]; onMessageRead?: () => void; initialMsgId?: number; onCall?: (userId: number, userName: string, isVideo?: boolean) => void; onChatUpdate?: (updated: Partial<Chat>) => void;
+function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRead, initialMsgId, onCall, onChatUpdate, onAddContact }: {
+  chat: Chat; token: string; currentUserId: number; onBack: () => void; allChats: Chat[]; onMessageRead?: () => void; initialMsgId?: number; onCall?: (userId: number, userName: string, isVideo?: boolean) => void; onChatUpdate?: (updated: Partial<Chat>) => void; onAddContact?: (name: string, peerId: number) => void;
 }) {
   const [text, setText] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -1702,6 +1702,16 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
                       <div>
                         <p className="text-sm text-red-300 font-medium">Заблокировать</p>
                         <p className="text-[11px] text-muted-foreground">Добавить в чёрный список</p>
+                      </div>
+                    </button>
+                  )}
+                  {onAddContact && chat.peer_id && (
+                    <button onClick={() => { setShowBlockMenu(false); onAddContact(chat.name, chat.peer_id!); }}
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-emerald-500/10 transition-colors text-left border-b border-white/5">
+                      <Icon name="UserPlus" size={15} className="text-emerald-400" />
+                      <div>
+                        <p className="text-sm text-emerald-300 font-medium">Добавить в контакты</p>
+                        <p className="text-[11px] text-muted-foreground">Сохранить в адресную книгу</p>
                       </div>
                     </button>
                   )}
@@ -2701,7 +2711,16 @@ function ChatScreen({ chat, token, currentUserId, onBack, allChats, onMessageRea
 
 // ─── Chats Tab ────────────────────────────────────────────────────────────────
 
-function ChatsTab({ token, currentUserId, onMessageRead, onCall, openChatId, onChatOpened }: { token: string; currentUserId: number; onMessageRead: (chatId: number) => void; onCall?: (userId: number, userName: string, isVideo?: boolean) => void; openChatId?: number | null; onChatOpened?: () => void }) {
+function ChatsTab({ token, currentUserId, onMessageRead, onCall, openChatId, onChatOpened }: { token: string; currentUserId: number; onMessageRead: (chatId: number) => void; onCall?: (userId: number, userName: string, isVideo?: boolean) => void; openChatId?: number | null; onChatOpened?: () => void; }) {
+  // ── Быстрое добавление в контакты из чата ──
+  async function addContactFromChat(name: string, peerId: number) {
+    try {
+      await fetch(AUTH_URL, {
+        method: "POST", headers: apiHeaders(token),
+        body: JSON.stringify({ action: "contacts/add", name, phone: "", peer_id: peerId }),
+      });
+    } catch (_e) { /* ignore */ }
+  }
   const [chats, setChats] = useState<Chat[]>([]);
   const [activeChat, setActiveChat] = useState<Chat | null>(null);
   const [search, setSearch] = useState("");
@@ -2904,6 +2923,7 @@ function ChatsTab({ token, currentUserId, onMessageRead, onCall, openChatId, onC
     return <ChatScreen chat={activeChat} token={token} currentUserId={currentUserId}
       onBack={() => { setActiveChat(null); loadChats(); setInitialMsgId(undefined); }} allChats={chats}
       onMessageRead={() => onMessageRead(activeChat.id)} initialMsgId={initialMsgId} onCall={onCall}
+      onAddContact={addContactFromChat}
       onChatUpdate={(updated) => {
         setActiveChat(prev => prev ? { ...prev, ...updated } : prev);
         setChats(prev => prev.map(c => c.id === activeChat.id ? { ...c, ...updated } : c));
@@ -4611,26 +4631,27 @@ function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (us
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
-  const [syncDone, setSyncDone] = useState<number | null>(null);
+  const [syncDone, setSyncDone] = useState<{ synced: number; found: number } | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [addName, setAddName] = useState("");
   const [addPhone, setAddPhone] = useState("");
+  const [addEmail, setAddEmail] = useState("");
   const [addLoading, setAddLoading] = useState(false);
   const [addError, setAddError] = useState("");
   const [tab, setTab] = useState<"my" | "search">("my");
   const [searchUsers, setSearchUsers] = useState<{ id: number; name: string; phone: string; status: string; avatar_url?: string | null }[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchQ, setSearchQ] = useState("");
-
   const [showSyncBanner, setShowSyncBanner] = useState(false);
+  const [noApiPrompt, setNoApiPrompt] = useState(false);
+
+  // Поддержка Contact Picker API
+  const hasContactApi = "contacts" in navigator && "ContactsManager" in window;
 
   useEffect(() => {
     loadContacts();
-    // Показываем баннер синхронизации если ещё не синхронизировали
     const syncKey = `pulse_contacts_synced_${token?.slice(0, 8)}`;
-    if (!localStorage.getItem(syncKey) && "contacts" in navigator) {
-      setShowSyncBanner(true);
-    }
+    if (!localStorage.getItem(syncKey)) setShowSyncBanner(true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
@@ -4644,44 +4665,68 @@ function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (us
   }
 
   async function syncPhonebook() {
-    if (!("contacts" in navigator)) {
-      alert("Ваш браузер не поддерживает доступ к телефонной книге. Попробуйте в Chrome на Android.");
+    if (!hasContactApi) {
+      // Нет Contact Picker API — показываем форму ручного ввода
+      setShowSyncBanner(false);
+      setNoApiPrompt(true);
+      setShowAdd(true);
       return;
     }
     setSyncing(true);
     try {
+      // Запрашиваем name, tel и email — все доступные поля
+      // @ts-expect-error — Contact Picker API (нет в TypeScript types)
+      const supported = await navigator.contacts.getProperties();
+      const props = ["name", "tel"];
+      if (supported.includes("email")) props.push("email");
+
       // @ts-expect-error — Contact Picker API
-      const raw = await navigator.contacts.select(["name", "tel"], { multiple: true });
-      const entries: { name: string; phone: string }[] = [];
+      const raw = await navigator.contacts.select(props, { multiple: true });
+      if (!raw || raw.length === 0) { setSyncing(false); return; }
+
+      const entries: { name: string; phone: string; email?: string }[] = [];
       for (const c of raw) {
-        const name = (c.name && c.name[0]) || "Без имени";
-        for (const tel of (c.tel || [])) {
-          const phone = tel.replace(/\s+/g, "").replace(/[^+\d]/g, "");
-          if (phone) entries.push({ name, phone });
+        const name = Array.isArray(c.name) ? c.name[0] : (c.name || "Без имени");
+        const emails: string[] = Array.isArray(c.email) ? c.email : [];
+        const tels: string[] = Array.isArray(c.tel) ? c.tel : [];
+        if (tels.length === 0) {
+          // Контакт без телефона — добавим с email если есть
+          if (emails[0]) entries.push({ name, phone: "", email: emails[0] });
+        } else {
+          for (const tel of tels) {
+            const phone = tel.replace(/\s+/g, "").replace(/[^+\d]/g, "");
+            if (phone) entries.push({ name, phone, email: emails[0] });
+          }
         }
       }
       if (!entries.length) { setSyncing(false); return; }
+
       const res = await fetch(AUTH_URL, {
         method: "POST", headers: apiHeaders(token),
         body: JSON.stringify({ action: "contacts/sync", contacts: entries }),
       });
       const data = await res.json();
-      setSyncDone(data.synced ?? 0);
-      setTimeout(() => setSyncDone(null), 3000);
+      setSyncDone({ synced: data.synced ?? 0, found: data.found ?? 0 });
+      setTimeout(() => setSyncDone(null), 4000);
       const syncKey = `pulse_contacts_synced_${token?.slice(0, 8)}`;
       localStorage.setItem(syncKey, "1");
       setShowSyncBanner(false);
       await loadContacts();
+    } catch (_e) {
+      // Пользователь отменил — просто закрываем
     } finally { setSyncing(false); }
   }
 
   async function addContact() {
-    if (!addName.trim() || !addPhone.trim()) { setAddError("Заполните имя и номер"); return; }
+    if (!addName.trim() || (!addPhone.trim() && !addEmail.trim())) {
+      setAddError("Заполните имя и хотя бы телефон или email");
+      return;
+    }
     setAddLoading(true); setAddError("");
     try {
       const res = await fetch(AUTH_URL, {
         method: "POST", headers: apiHeaders(token),
-        body: JSON.stringify({ action: "contacts/add", name: addName.trim(), phone: addPhone.trim() }),
+        body: JSON.stringify({ action: "contacts/add", name: addName.trim(), phone: addPhone.trim(), email: addEmail.trim() }),
       });
       const data = await res.json();
       if (!res.ok) { setAddError(data.error || "Ошибка"); return; }
@@ -4690,7 +4735,7 @@ function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (us
         if (exists >= 0) { const n = [...prev]; n[exists] = data.contact; return n; }
         return [data.contact, ...prev];
       });
-      setShowAdd(false); setAddName(""); setAddPhone("");
+      setShowAdd(false); setAddName(""); setAddPhone(""); setAddEmail(""); setNoApiPrompt(false);
     } finally { setAddLoading(false); }
   }
 
@@ -4733,13 +4778,14 @@ function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (us
           <h1 className="text-2xl font-golos font-black text-gradient">Контакты</h1>
           <div className="flex gap-1.5">
             <button onClick={syncPhonebook} disabled={syncing}
+              title={hasContactApi ? "Синхронизировать с телефонной книгой" : "Добавить контакт"}
               className="p-2 hover:bg-white/10 rounded-xl transition-colors flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
               {syncing
                 ? <div className="w-4 h-4 border-2 border-sky-500/40 border-t-sky-500 rounded-full animate-spin" />
-                : <Icon name="RefreshCw" size={16} className="text-sky-400" />}
+                : <Icon name={hasContactApi ? "RefreshCw" : "BookUser"} size={16} className="text-sky-400" />}
             </button>
-            <button onClick={() => { setShowAdd(true); setAddError(""); }}
-              className="p-2 hover:bg-white/10 rounded-xl transition-colors">
+            <button onClick={() => { setShowAdd(true); setAddError(""); setNoApiPrompt(false); }}
+              className="p-2 hover:bg-white/10 rounded-xl transition-colors" title="Добавить контакт вручную">
               <Icon name="UserPlus" size={16} className="text-cyan-400" />
             </button>
           </div>
@@ -4770,29 +4816,51 @@ function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (us
 
       {/* Баннер предложения синхронизации */}
       {showSyncBanner && (
-        <div className="mx-4 mb-2 flex items-center gap-3 px-4 py-3 rounded-2xl bg-sky-500/10 border border-sky-500/20 animate-fade-in">
-          <Icon name="BookUser" size={16} className="text-sky-400 flex-shrink-0" />
-          <div className="flex-1 min-w-0">
-            <p className="text-xs text-sky-300 font-medium">Синхронизировать телефонную книгу?</p>
-            <p className="text-[11px] text-muted-foreground">Найдём друзей из контактов в приложении</p>
-          </div>
-          <div className="flex gap-1.5">
-            <button onClick={syncPhonebook} className="px-3 py-1.5 rounded-xl bg-sky-500 text-white text-xs font-semibold hover:bg-sky-400 transition-colors">
-              Да
+        <div className="mx-4 mb-2 glass rounded-2xl p-3 border border-sky-500/20 animate-fade-in">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="w-8 h-8 rounded-xl bg-sky-500/15 flex items-center justify-center flex-shrink-0">
+              <Icon name="BookUser" size={15} className="text-sky-400" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs text-foreground font-semibold">Найти контакты в приложении</p>
+              <p className="text-[11px] text-muted-foreground">
+                {hasContactApi ? "Импортируем из телефонной книги" : "Добавьте контакты вручную"}
+              </p>
+            </div>
+            <button onClick={() => { setShowSyncBanner(false); localStorage.setItem(`pulse_contacts_synced_${token?.slice(0,8)}`, "1"); }}
+              className="p-1 hover:bg-white/10 rounded-full">
+              <Icon name="X" size={13} className="text-muted-foreground" />
             </button>
-            <button onClick={() => { setShowSyncBanner(false); const k = `pulse_contacts_synced_${token?.slice(0,8)}`; localStorage.setItem(k,"1"); }}
-              className="px-3 py-1.5 rounded-xl bg-white/10 text-muted-foreground text-xs hover:bg-white/20 transition-colors">
-              Нет
+          </div>
+          <div className="flex gap-2">
+            <button onClick={syncPhonebook} disabled={syncing}
+              className="flex-1 py-2 rounded-xl bg-gradient-to-r from-sky-600 to-blue-600 text-white text-xs font-semibold hover:opacity-90 transition-all flex items-center justify-center gap-1.5">
+              {syncing
+                ? <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                : <Icon name={hasContactApi ? "RefreshCw" : "UserPlus"} size={13} />}
+              {hasContactApi ? "Синхронизировать" : "Добавить вручную"}
+            </button>
+            <button onClick={() => { setShowSyncBanner(false); localStorage.setItem(`pulse_contacts_synced_${token?.slice(0,8)}`, "1"); }}
+              className="px-4 py-2 rounded-xl bg-white/8 text-muted-foreground text-xs hover:bg-white/12 transition-colors">
+              Позже
             </button>
           </div>
         </div>
       )}
 
-      {/* Sync banner */}
+      {/* Результат синхронизации */}
       {syncDone !== null && (
-        <div className="mx-4 mb-2 flex items-center gap-2 px-3 py-2 rounded-xl bg-green-500/10 border border-green-500/20 animate-fade-in">
-          <Icon name="CheckCircle" size={14} className="text-green-400" />
-          <span className="text-xs text-green-300">Синхронизировано {syncDone} контактов</span>
+        <div className="mx-4 mb-2 glass rounded-xl px-3 py-2.5 border border-green-500/20 animate-fade-in">
+          <div className="flex items-center gap-2">
+            <Icon name="CheckCircle2" size={14} className="text-green-400 flex-shrink-0" />
+            <div>
+              <p className="text-xs text-green-300 font-medium">Синхронизация завершена</p>
+              <p className="text-[11px] text-muted-foreground">
+                Добавлено: {syncDone.synced}
+                {syncDone.found > 0 && ` · В приложении: ${syncDone.found}`}
+              </p>
+            </div>
+          </div>
         </div>
       )}
 
@@ -4800,29 +4868,56 @@ function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (us
       {showAdd && (
         <div className="mx-4 mb-3 glass rounded-3xl p-4 border border-blue-500/20 animate-fade-in space-y-3">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-sky-400 uppercase tracking-wide">Новый контакт</span>
-            <button onClick={() => setShowAdd(false)} className="text-muted-foreground hover:text-foreground">
+            <div>
+              <span className="text-xs font-semibold text-sky-400 uppercase tracking-wide">Новый контакт</span>
+              {noApiPrompt && (
+                <p className="text-[11px] text-muted-foreground mt-0.5">Ваш браузер не поддерживает импорт — введите данные вручную</p>
+              )}
+            </div>
+            <button onClick={() => { setShowAdd(false); setNoApiPrompt(false); setAddName(""); setAddPhone(""); setAddEmail(""); }}
+              className="text-muted-foreground hover:text-foreground p-1">
               <Icon name="X" size={14} />
             </button>
           </div>
           <div className="relative">
             <Icon name="User" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <input value={addName} onChange={e => setAddName(e.target.value)}
-              placeholder="Имя"
-              className="w-full bg-secondary/60 border border-white/10 rounded-xl pl-9 pr-4 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 transition-all" />
+              placeholder="Имя контакта *"
+              className="w-full bg-secondary/60 border border-white/10 rounded-xl pl-9 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 transition-all" />
           </div>
           <div className="relative">
             <Icon name="Phone" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <input value={addPhone} onChange={e => setAddPhone(e.target.value)}
               placeholder="+7 999 000 00 00"
               type="tel"
-              className="w-full bg-secondary/60 border border-white/10 rounded-xl pl-9 pr-4 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 transition-all" />
+              className="w-full bg-secondary/60 border border-white/10 rounded-xl pl-9 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 transition-all" />
           </div>
-          {addError && <p className="text-xs text-red-400">{addError}</p>}
-          <button onClick={addContact} disabled={addLoading}
-            className="w-full py-2 rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm font-semibold hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-60 flex items-center justify-center gap-2">
-            {addLoading ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : "Добавить"}
-          </button>
+          <div className="relative">
+            <Icon name="Mail" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input value={addEmail} onChange={e => setAddEmail(e.target.value)}
+              placeholder="Email (необязательно)"
+              type="email"
+              className="w-full bg-secondary/60 border border-white/10 rounded-xl pl-9 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-sky-500/50 transition-all" />
+          </div>
+          {addError && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-500/10 border border-red-500/20">
+              <Icon name="AlertCircle" size={13} className="text-red-400" />
+              <p className="text-xs text-red-300">{addError}</p>
+            </div>
+          )}
+          <div className="flex gap-2">
+            <button onClick={addContact} disabled={addLoading}
+              className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm font-semibold hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-60 flex items-center justify-center gap-2">
+              {addLoading ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <><Icon name="UserPlus" size={15} />Добавить</>}
+            </button>
+            {hasContactApi && !noApiPrompt && (
+              <button onClick={syncPhonebook} disabled={syncing}
+                className="px-4 py-2.5 rounded-xl bg-sky-500/15 text-sky-400 text-sm font-medium hover:bg-sky-500/25 transition-colors flex items-center gap-1.5 flex-shrink-0"
+                title="Импортировать из телефонной книги">
+                <Icon name="BookUser" size={15} />
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -4834,16 +4929,29 @@ function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (us
               ? (
                 <div className="flex flex-col items-center justify-center h-full gap-4 px-8 text-center">
                   <div className="w-16 h-16 rounded-3xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center">
-                    <Icon name="Users" size={28} className="text-cyan-400" />
+                    <Icon name="BookUser" size={28} className="text-cyan-400" />
                   </div>
                   <div>
                     <p className="font-golos font-semibold text-foreground mb-1">Нет контактов</p>
-                    <p className="text-sm text-muted-foreground">Добавьте контакт вручную или синхронизируйте с телефонной книгой</p>
+                    <p className="text-sm text-muted-foreground">
+                      {hasContactApi
+                        ? "Импортируйте из телефонной книги или добавьте вручную"
+                        : "Добавьте контакт вручную по имени и номеру телефона"}
+                    </p>
                   </div>
-                  <button onClick={syncPhonebook}
-                    className="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-500 text-white text-sm font-semibold hover:opacity-90 transition-all flex items-center gap-2">
-                    <Icon name="RefreshCw" size={14} />Синхронизировать
-                  </button>
+                  <div className="flex flex-col gap-2 w-full max-w-[220px]">
+                    {hasContactApi && (
+                      <button onClick={syncPhonebook} disabled={syncing}
+                        className="w-full px-5 py-2.5 rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-500 text-white text-sm font-semibold hover:opacity-90 transition-all flex items-center justify-center gap-2 disabled:opacity-60">
+                        {syncing ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Icon name="RefreshCw" size={14} />}
+                        Синхронизировать
+                      </button>
+                    )}
+                    <button onClick={() => { setShowAdd(true); setAddError(""); }}
+                      className="w-full px-5 py-2.5 rounded-2xl bg-white/8 text-foreground text-sm font-medium hover:bg-white/12 transition-all flex items-center justify-center gap-2">
+                      <Icon name="UserPlus" size={14} />Добавить вручную
+                    </button>
+                  </div>
                 </div>
               )
               : Object.keys(grouped).sort().map(letter => (
