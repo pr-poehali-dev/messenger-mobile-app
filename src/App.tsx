@@ -4284,8 +4284,25 @@ function IncomingCallBanner({ session, onAccept, onDecline }: { session: CallSes
 function CallsTab({ userId, onCall, missedCount }: { userId: number; onCall: (userId: number, userName: string, isVideo?: boolean) => void; missedCount: number }) {
   const [calls, setCalls] = useState<LocalCallRecord[]>(() => loadCallHistory(userId));
   const [filter, setFilter] = useState<"all" | "incoming" | "outgoing" | "missed">("all");
+  const [swipedId, setSwipedId] = useState<string | null>(null);
+  const [confirmClearAll, setConfirmClearAll] = useState(false);
+  const touchStartX = useRef<number>(0);
+  const touchStartY = useRef<number>(0);
 
   useEffect(() => { setCalls(loadCallHistory(userId)); }, [userId, missedCount]);
+
+  function deleteCall(id: string) {
+    const updated = calls.filter(c => c.id !== id);
+    try { localStorage.setItem(`${CALL_HISTORY_KEY}_${userId}`, JSON.stringify(updated)); } catch (_e) { /* ignore */ }
+    setCalls(updated);
+    setSwipedId(null);
+  }
+
+  function clearAll() {
+    clearCallHistory(userId);
+    setCalls([]);
+    setConfirmClearAll(false);
+  }
 
   const filtered = calls.filter(c => {
     if (filter === "all") return true;
@@ -4308,10 +4325,31 @@ function CallsTab({ userId, onCall, missedCount }: { userId: number; onCall: (us
     return d.toLocaleDateString("ru", { day: "numeric", month: "short" });
   }
 
+  function handleTouchStart(e: React.TouchEvent, id: string) {
+    touchStartX.current = e.touches[0].clientX;
+    touchStartY.current = e.touches[0].clientY;
+    if (swipedId && swipedId !== id) setSwipedId(null);
+  }
+
+  function handleTouchEnd(e: React.TouchEvent, id: string) {
+    const dx = touchStartX.current - e.changedTouches[0].clientX;
+    const dy = Math.abs(touchStartY.current - e.changedTouches[0].clientY);
+    if (dx > 60 && dy < 40) setSwipedId(id);
+    else if (dx < -20) setSwipedId(null);
+  }
+
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full" onClick={() => swipedId && setSwipedId(null)}>
       <div className="px-4 pt-4 pb-3 flex-shrink-0">
-        <h1 className="text-2xl font-golos font-black text-gradient mb-3">Звонки</h1>
+        <div className="flex items-center justify-between mb-3">
+          <h1 className="text-2xl font-golos font-black text-gradient">Звонки</h1>
+          {calls.length > 0 && (
+            <button onClick={() => setConfirmClearAll(true)}
+              className="text-xs text-muted-foreground hover:text-red-400 transition-colors px-2 py-1">
+              Очистить всё
+            </button>
+          )}
+        </div>
         <div className="flex gap-1.5 flex-wrap">
           {(["all", "incoming", "outgoing", "missed"] as const).map(f => (
             <button key={f} onClick={() => setFilter(f)}
@@ -4322,6 +4360,23 @@ function CallsTab({ userId, onCall, missedCount }: { userId: number; onCall: (us
           ))}
         </div>
       </div>
+
+      {/* Подтверждение очистки */}
+      {confirmClearAll && (
+        <div className="mx-4 mb-3 glass rounded-2xl p-4 border border-red-500/20 animate-fade-in flex-shrink-0">
+          <p className="text-sm text-foreground mb-3">Удалить всю историю звонков?</p>
+          <div className="flex gap-2">
+            <button onClick={clearAll}
+              className="flex-1 py-2 rounded-xl bg-red-500/20 text-red-400 text-sm font-medium hover:bg-red-500/30 transition-colors">
+              Удалить
+            </button>
+            <button onClick={() => setConfirmClearAll(false)}
+              className="flex-1 py-2 rounded-xl bg-white/8 text-muted-foreground text-sm font-medium hover:bg-white/12 transition-colors">
+              Отмена
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto scroll-container">
         {filtered.length === 0 && (
@@ -4340,37 +4395,57 @@ function CallsTab({ userId, onCall, missedCount }: { userId: number; onCall: (us
               : call.direction === "outgoing"
                 ? { icon: "PhoneOutgoing" as const, color: "text-cyan-400", label: "Исходящий" }
                 : { icon: "PhoneIncoming" as const, color: "text-green-400", label: "Входящий" };
+          const isSwiped = swipedId === call.id;
 
           return (
-            <div key={call.id} className="flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-all animate-fade-in"
-              style={{ animationDelay: `${i * 0.04}s` }}>
-              <AvatarEl name={call.peerName} size="md" avatarUrl={call.peerAvatar} />
-              <div className="flex-1 min-w-0">
-                <div className="font-golos font-semibold text-foreground text-sm truncate">{call.peerName}</div>
-                <div className="flex items-center gap-1.5 mt-0.5">
-                  <Icon name={cfg.icon} size={12} className={cfg.color} />
-                  <span className={`text-xs ${cfg.color}`}>{cfg.label}</span>
-                  {call.isVideo && (
-                    <span className="flex items-center gap-0.5 text-xs text-purple-400">
-                      <Icon name="Video" size={10} /> видео
-                    </span>
-                  )}
-                  {formatDuration(call.duration) && (
-                    <span className="text-xs text-muted-foreground">· {formatDuration(call.duration)}</span>
-                  )}
-                </div>
+            <div key={call.id} className="relative overflow-hidden animate-fade-in"
+              style={{ animationDelay: `${i * 0.04}s` }}
+              onTouchStart={e => handleTouchStart(e, call.id)}
+              onTouchEnd={e => handleTouchEnd(e, call.id)}>
+              {/* Кнопка удаления (свайп / ПК) */}
+              <div className={`absolute right-0 top-0 bottom-0 flex items-center px-4 bg-red-500 transition-all duration-200 ${isSwiped ? "opacity-100 translate-x-0" : "opacity-0 translate-x-full"}`}>
+                <button onClick={e => { e.stopPropagation(); deleteCall(call.id); }}
+                  className="flex flex-col items-center gap-0.5 text-white">
+                  <Icon name="Trash2" size={18} />
+                  <span className="text-[10px] font-medium">Удалить</span>
+                </button>
               </div>
-              <div className="flex flex-col items-end gap-1">
-                <span className="text-[10px] text-muted-foreground">{formatTime(call.startedAt)}</span>
-                <div className="flex items-center gap-1">
-                  <button onClick={() => onCall(call.peerId, call.peerName, false)}
-                    className="p-1.5 hover:bg-white/10 rounded-full transition-colors" title="Аудиозвонок">
-                    <Icon name="Phone" size={14} className="text-sky-400" />
-                  </button>
-                  <button onClick={() => onCall(call.peerId, call.peerName, true)}
-                    className="p-1.5 hover:bg-white/10 rounded-full transition-colors" title="Видеозвонок">
-                    <Icon name="Video" size={14} className="text-purple-400" />
-                  </button>
+
+              <div className={`flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-all duration-200 ${isSwiped ? "-translate-x-16" : "translate-x-0"}`}>
+                <AvatarEl name={call.peerName} size="md" avatarUrl={call.peerAvatar} />
+                <div className="flex-1 min-w-0">
+                  <div className="font-golos font-semibold text-foreground text-sm truncate">{call.peerName}</div>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <Icon name={cfg.icon} size={12} className={cfg.color} />
+                    <span className={`text-xs ${cfg.color}`}>{cfg.label}</span>
+                    {call.isVideo && (
+                      <span className="flex items-center gap-0.5 text-xs text-purple-400">
+                        <Icon name="Video" size={10} /> видео
+                      </span>
+                    )}
+                    {formatDuration(call.duration) && (
+                      <span className="text-xs text-muted-foreground">· {formatDuration(call.duration)}</span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex flex-col items-end gap-1">
+                  <span className="text-[10px] text-muted-foreground">{formatTime(call.startedAt)}</span>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => onCall(call.peerId, call.peerName, false)}
+                      className="p-1.5 hover:bg-white/10 rounded-full transition-colors" title="Аудиозвонок">
+                      <Icon name="Phone" size={14} className="text-sky-400" />
+                    </button>
+                    <button onClick={() => onCall(call.peerId, call.peerName, true)}
+                      className="p-1.5 hover:bg-white/10 rounded-full transition-colors" title="Видеозвонок">
+                      <Icon name="Video" size={14} className="text-purple-400" />
+                    </button>
+                    {/* Удалить (десктоп) */}
+                    <button onClick={e => { e.stopPropagation(); deleteCall(call.id); }}
+                      className="p-1.5 hover:bg-red-500/20 rounded-full transition-colors opacity-0 group-hover:opacity-100 md:opacity-0 md:hover:opacity-100"
+                      title="Удалить">
+                      <Icon name="X" size={13} className="text-muted-foreground hover:text-red-400" />
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
