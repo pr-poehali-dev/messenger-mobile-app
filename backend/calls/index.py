@@ -138,6 +138,8 @@ def handler(event: dict, context) -> dict:
                             SELECT endpoint, p256dh, auth
                             FROM {SCHEMA}.push_subscriptions
                             WHERE user_id = %s
+                              AND endpoint NOT LIKE 'https://fcm.googleapis.com/fcm/send/%%'
+                            ORDER BY COALESCE(updated_at, created_at) DESC
                         """, (callee_id,))
                         subs = cur.fetchall()
                     print(f"[push] found {len(subs)} subscriptions for user {callee_id}")
@@ -342,6 +344,8 @@ def handler(event: dict, context) -> dict:
                             SELECT endpoint, p256dh, auth
                             FROM {SCHEMA}.push_subscriptions
                             WHERE user_id = %s
+                              AND endpoint NOT LIKE 'https://fcm.googleapis.com/fcm/send/%%'
+                            ORDER BY COALESCE(updated_at, created_at) DESC
                         """, (callee_id,))
                         subs = cur.fetchall()
                     call_type = "📹 Видеозвонок" if is_video else "📞 Аудиозвонок"

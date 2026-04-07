@@ -6169,11 +6169,23 @@ export default function App() {
     navigator.serviceWorker.register(`/sw.js?v=${swVersion}`)
       .then(reg => {
         setSwReady(true);
-        // Передаём BUILD_TIME в SW чтобы он обновил свой кэш-ключ
-        reg.active?.postMessage({ type: "SET_BUILD_TIME", buildTime: swVersion });
-        reg.installing?.addEventListener("statechange", function() {
-          if (this.state === "activated") this.postMessage({ type: "SET_BUILD_TIME", buildTime: swVersion });
-        });
+
+        // Передаём токен и BUILD_TIME активному SW
+        const sendInitToSW = (sw: ServiceWorker) => {
+          sw.postMessage({ type: "SET_BUILD_TIME", buildTime: swVersion });
+          const savedToken = localStorage.getItem("pulse_token");
+          if (savedToken) sw.postMessage({ type: "UPDATE_AUTH_TOKEN", token: savedToken });
+        };
+
+        if (reg.active) sendInitToSW(reg.active);
+
+        // Если SW только устанавливается — передаём данные после активации
+        const pending = reg.installing ?? reg.waiting;
+        if (pending) {
+          pending.addEventListener("statechange", function() {
+            if (this.state === "activated") sendInitToSW(this as ServiceWorker);
+          });
+        }
         navigator.serviceWorker.addEventListener("message", (e) => {
           if (e.data?.type === "SYNC_REQUIRED") {
             window.dispatchEvent(new CustomEvent("kasper:sync"));
@@ -6257,7 +6269,7 @@ export default function App() {
   }
 
   // Финальная подписка на Push после разрешения
-  const doSubscribePush = useCallback(async () => {
+  const doSubscribePush = useCallback(async (force = false) => {
     if (!token || !("PushManager" in window)) return;
     try {
       const reg = await navigator.serviceWorker.ready;
@@ -6265,17 +6277,32 @@ export default function App() {
       const keyRes = await fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "vapid-public-key" }) });
       const keyData = await keyRes.json();
       if (!keyData.public_key) return;
-      const existing = await reg.pushManager.getSubscription();
-      const sub = existing ?? await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyData.public_key });
+
+      let sub = await reg.pushManager.getSubscription();
+
+      // При принудительном обновлении (force=true) — отписываем старую и создаём новую
+      // Это нужно когда VAPID ключ мог измениться или подписка устарела
+      if (force && sub) {
+        await sub.unsubscribe();
+        sub = null;
+      }
+
+      if (!sub) {
+        sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyData.public_key });
+      }
+
       await fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "subscribe", ...sub.toJSON() }) });
+
+      // Передаём актуальный токен в SW сразу после подписки
+      reg.active?.postMessage({ type: "UPDATE_AUTH_TOKEN", token });
     } catch (_e) { /* push not supported or blocked */ }
   }, [token]);
 
   // Подписка на Push-уведомления (после логина + после регистрации SW)
   useEffect(() => {
     if (!token || !swReady || !("PushManager" in window) || !("Notification" in window)) return;
-    // Уже разрешено — просто подписываемся
-    if (Notification.permission === "granted") { doSubscribePush(); return; }
+    // Уже разрешено — принудительно обновляем подписку (force=true гарантирует свежий endpoint)
+    if (Notification.permission === "granted") { doSubscribePush(true); return; }
     // Уже отклонено — не спрашиваем снова
     if (Notification.permission === "denied") return;
     // Показываем мягкий pre-prompt через 3 секунды после входа
@@ -6462,10 +6489,16 @@ export default function App() {
       if (activeCall) return;
       const res = await fetch(CALLS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "incoming" }) }).catch(() => null);
       if (!res) return;
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
+      if (!data) return;
       if (data.call) {
-        setIncomingCall({ callId: data.call.id, peerId: data.call.caller_id, peerName: data.call.caller_name, peerAvatar: data.call.caller_avatar ?? null, direction: "incoming", status: "ringing", isVideo: !!data.call.is_video });
+        setIncomingCall(prev => {
+          // Не перезаписываем если это тот же звонок (избегаем мигания UI)
+          if (prev && prev.callId === data.call.id) return prev;
+          return { callId: data.call.id, peerId: data.call.caller_id, peerName: data.call.caller_name, peerAvatar: data.call.caller_avatar ?? null, direction: "incoming", status: "ringing", isVideo: !!data.call.is_video };
+        });
       } else {
+        // Сбрасываем только если звонок реально пропал на сервере
         setIncomingCall(null);
       }
     }

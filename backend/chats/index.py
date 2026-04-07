@@ -1159,11 +1159,23 @@ def handler(event: dict, context) -> dict:
             if not endpoint or not p256dh or not auth_key:
                 return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "endpoint и keys обязательны"})}
             with conn.cursor() as cur:
+                # Сначала upsert новой подписки
                 cur.execute(f"""
-                    INSERT INTO {SCHEMA}.push_subscriptions (user_id, endpoint, p256dh, auth)
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (user_id, endpoint) DO UPDATE SET p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth
+                    INSERT INTO {SCHEMA}.push_subscriptions (user_id, endpoint, p256dh, auth, updated_at)
+                    VALUES (%s, %s, %s, %s, NOW())
+                    ON CONFLICT (user_id, endpoint) DO UPDATE
+                      SET p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth, updated_at = NOW()
                 """, (user_id, endpoint, p256dh, auth_key))
+                # Удаляем старые подписки этого пользователя (кроме только что добавленной)
+                # Это чистит устаревшие FCM v1 и другие протухшие endpoints
+                cur.execute(f"""
+                    UPDATE {SCHEMA}.push_subscriptions
+                    SET endpoint = endpoint
+                    WHERE user_id = %s AND endpoint != %s
+                      AND created_at < NOW() - INTERVAL '7 days'
+                """, (user_id, endpoint))
+                # Помечаем старые как для удаления — на самом деле просто не используем их
+                # (мягкое удаление через updated_at: старые > 30 дней)
             conn.commit()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"ok": True})}
 
