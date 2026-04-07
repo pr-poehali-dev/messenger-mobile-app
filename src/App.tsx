@@ -4758,6 +4758,32 @@ function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (us
     } finally { setSearchLoading(false); }
   }
 
+  function exportVcf() {
+    const lines = contacts.map(c => {
+      const nameParts = c.name.trim().split(/\s+/);
+      const last = nameParts.length > 1 ? nameParts[nameParts.length - 1] : "";
+      const first = nameParts.length > 1 ? nameParts.slice(0, -1).join(" ") : nameParts[0];
+      const vcf = [
+        "BEGIN:VCARD",
+        "VERSION:3.0",
+        `FN:${c.name}`,
+        `N:${last};${first};;;`,
+        c.phone && !c.phone.startsWith("email:") ? `TEL;TYPE=CELL:${c.phone}` : "",
+        c.phone.startsWith("email:") ? `EMAIL:${c.phone.replace("email:", "")}` : "",
+        c.avatar_url ? `PHOTO;VALUE=URI:${c.avatar_url}` : "",
+        "END:VCARD",
+      ].filter(Boolean).join("\r\n");
+      return vcf;
+    });
+    const blob = new Blob([lines.join("\r\n\r\n")], { type: "text/vcard;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "kasper-contacts.vcf";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   const filtered = contacts.filter(c =>
     c.name.toLowerCase().includes(search.toLowerCase()) ||
     c.phone.includes(search)
@@ -4784,6 +4810,12 @@ function ContactsTab({ token, onCall, onOpenChat }: { token: string; onCall: (us
                 ? <div className="w-4 h-4 border-2 border-sky-500/40 border-t-sky-500 rounded-full animate-spin" />
                 : <Icon name={hasContactApi ? "RefreshCw" : "BookUser"} size={16} className="text-sky-400" />}
             </button>
+            {contacts.length > 0 && (
+              <button onClick={exportVcf}
+                className="p-2 hover:bg-white/10 rounded-xl transition-colors" title="Экспорт контактов (VCF)">
+                <Icon name="Download" size={16} className="text-emerald-400" />
+              </button>
+            )}
             <button onClick={() => { setShowAdd(true); setAddError(""); setNoApiPrompt(false); }}
               className="p-2 hover:bg-white/10 rounded-xl transition-colors" title="Добавить контакт вручную">
               <Icon name="UserPlus" size={16} className="text-cyan-400" />
