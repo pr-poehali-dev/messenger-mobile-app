@@ -5227,6 +5227,8 @@ function SettingsTab({ onLogout, onTestSound, onNotifSettingsChange }: { onLogou
   // Data
   const [autoDownload, setAutoDownload] = useState(() => localStorage.getItem("s_auto_download") !== "0");
   const [dataSaver, setDataSaver] = useState(() => localStorage.getItem("s_data_saver") === "1");
+  const [cacheClearing, setCacheClearing] = useState(false);
+  const [cacheResult, setCacheResult] = useState<string | null>(null);
 
   // Folders
   const [folders] = useState([
@@ -5237,6 +5239,82 @@ function SettingsTab({ onLogout, onTestSound, onNotifSettingsChange }: { onLogou
 
   function save(key: string, val: boolean | string) {
     localStorage.setItem(key, typeof val === "boolean" ? (val ? "1" : "0") : val);
+  }
+
+  // Ключи которые НЕ трогаем при очистке кэша
+  const PROTECTED_KEYS = new Set([
+    "pulse_token", "pulse_user", "pulse_theme", "pulse_pin", "pulse_pin_locked",
+    "pulse_onboarding_done", "kasper_install_shown", "kasper_notif_prompt_dismissed",
+    "s_enter_send", "s_bubble", "s_fontsize",
+    "s_show_phone", "s_show_online", "s_read_receipts",
+    "s_msg_sound", "s_bg_notif", "s_group_notif", "s_call_notif", "s_preview",
+    "s_auto_download", "s_data_saver",
+  ]);
+
+  async function clearCache() {
+    setCacheClearing(true);
+    let freedBytes = 0;
+
+    // 1. Замеряем размер Cache Storage до очистки
+    let cacheSizeBefore = 0;
+    try {
+      const estimate = await navigator.storage?.estimate();
+      cacheSizeBefore = estimate?.usage ?? 0;
+    } catch (_e) { /* ignore */ }
+
+    // 2. Удаляем все Service Worker кэши (кроме критичных)
+    if ("caches" in window) {
+      try {
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+        freedBytes += cacheSizeBefore;
+      } catch (_e) { /* ignore */ }
+    }
+
+    // 3. Очищаем IndexedDB (медиа-блобы и логи, если есть)
+    if ("indexedDB" in window) {
+      try {
+        const dbs = await indexedDB.databases?.() ?? [];
+        for (const db of dbs) {
+          if (db.name && !["kasper_auth", "kasper_settings"].includes(db.name)) {
+            indexedDB.deleteDatabase(db.name);
+          }
+        }
+      } catch (_e) { /* ignore */ }
+    }
+
+    // 4. Удаляем из localStorage только кэш-ключи (не трогаем защищённые)
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      // Защищаем явные ключи и ключи синхронизации контактов
+      if (PROTECTED_KEYS.has(key)) continue;
+      if (key.startsWith("pulse_contacts_synced_")) continue;
+      if (key.startsWith("kasper_calls_viewed_")) continue;
+      if (key.startsWith("kasper_call_history_")) continue;
+      keysToRemove.push(key);
+    }
+    let lsBytes = 0;
+    keysToRemove.forEach(key => {
+      lsBytes += (localStorage.getItem(key) || "").length * 2;
+      localStorage.removeItem(key);
+    });
+    freedBytes += lsBytes;
+
+    // 5. Замеряем финальный размер
+    try {
+      const estimate = await navigator.storage?.estimate();
+      const after = estimate?.usage ?? 0;
+      if (cacheSizeBefore > 0 && after < cacheSizeBefore) {
+        freedBytes = Math.max(freedBytes, cacheSizeBefore - after);
+      }
+    } catch (_e) { /* ignore */ }
+
+    const mb = (freedBytes / (1024 * 1024)).toFixed(1);
+    setCacheResult(`Кэш очищен. Освобождено ~${mb} МБ`);
+    setTimeout(() => setCacheResult(null), 4000);
+    setCacheClearing(false);
   }
 
   function toggleDark(val: boolean) { setDark(val); applyTheme(val); }
@@ -5433,16 +5511,39 @@ function SettingsTab({ onLogout, onTestSound, onNotifSettingsChange }: { onLogou
 
               <div>
                 <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-2 px-1">Кэш и хранилище</div>
-                <div className="glass rounded-3xl p-4 space-y-3">
-                  {[["Кэш чатов", "~2.4 МБ"], ["Медиафайлы", "~18 МБ"], ["Голосовые", "~1.1 МБ"]].map(([label, size]) => (
-                    <div key={label} className="flex items-center justify-between">
-                      <span className="text-sm text-foreground">{label}</span>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-muted-foreground">{size}</span>
-                        <button className="text-xs text-sky-400 hover:text-sky-300 font-medium px-2 py-0.5 rounded-lg hover:bg-sky-500/10 transition-all">Очистить</button>
+
+                {/* Уведомление об успешной очистке */}
+                {cacheResult && (
+                  <div className="mb-3 flex items-center gap-2.5 px-4 py-3 rounded-2xl bg-green-500/10 border border-green-500/20 animate-fade-in">
+                    <Icon name="CheckCircle2" size={16} className="text-green-400 flex-shrink-0" />
+                    <span className="text-sm text-green-300">{cacheResult}</span>
+                  </div>
+                )}
+
+                <div className="glass rounded-3xl overflow-hidden">
+                  <div className="px-4 py-3.5 border-b border-white/5">
+                    <div className="text-xs text-muted-foreground leading-relaxed">
+                      Удаляет временные файлы браузера, кэш Service Worker и медиафайлы.
+                      Настройки, контакты и токен авторизации сохраняются.
+                    </div>
+                  </div>
+                  <button onClick={clearCache} disabled={cacheClearing}
+                    className="w-full flex items-center gap-3 px-4 py-4 hover:bg-red-500/5 transition-all disabled:opacity-60 group">
+                    <div className="w-9 h-9 rounded-xl bg-red-500/15 flex items-center justify-center flex-shrink-0 group-hover:bg-red-500/25 transition-colors">
+                      {cacheClearing
+                        ? <div className="w-4 h-4 border-2 border-red-400/40 border-t-red-400 rounded-full animate-spin" />
+                        : <Icon name="Trash2" size={16} className="text-red-400" />}
+                    </div>
+                    <div className="flex-1 text-left">
+                      <div className="text-sm font-medium text-foreground">
+                        {cacheClearing ? "Очищаю..." : "Очистить кэш"}
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-0.5">
+                        Cache Storage, IndexedDB, временные данные
                       </div>
                     </div>
-                  ))}
+                    {!cacheClearing && <Icon name="ChevronRight" size={15} className="text-muted-foreground" />}
+                  </button>
                 </div>
               </div>
             </>
