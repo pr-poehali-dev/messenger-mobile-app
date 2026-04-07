@@ -3833,6 +3833,39 @@ function CallScreen({ session, token, onEnd }: { session: CallSession; token: st
   const pendingCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
   const remoteDescSetRef = useRef(false);
   const callStatusRef = useRef<"ringing" | "active">(session.status === "active" ? "active" : "ringing");
+  const ringtoneRef = useRef<{ ctx: AudioContext; stop: () => void } | null>(null);
+
+  // ── Рингтон через Web Audio API (не требует файлов) ──────────────────────────
+  function startRingtone(isIncoming: boolean) {
+    try {
+      const AudioCtx = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      let stopped = false;
+
+      function playTone() {
+        if (stopped) return;
+        const freqs = isIncoming ? [440, 480] : [350, 440];
+        const osc1 = ctx.createOscillator();
+        const osc2 = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc1.type = "sine"; osc1.frequency.value = freqs[0];
+        osc2.type = "sine"; osc2.frequency.value = freqs[1];
+        gain.gain.setValueAtTime(0.15, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.2);
+        osc1.connect(gain); osc2.connect(gain); gain.connect(ctx.destination);
+        osc1.start(); osc2.start();
+        osc1.stop(ctx.currentTime + 1.2); osc2.stop(ctx.currentTime + 1.2);
+        if (!stopped) setTimeout(playTone, 2200);
+      }
+      playTone();
+      ringtoneRef.current = { ctx, stop: () => { stopped = true; ctx.close().catch(() => {}); } };
+    } catch (_e) { /* audio not available */ }
+  }
+
+  function stopRingtone() {
+    if (ringtoneRef.current) { ringtoneRef.current.stop(); ringtoneRef.current = null; }
+  }
 
   const ICE_SERVERS = [
     { urls: "stun:stun.l.google.com:19302" },
@@ -3871,6 +3904,7 @@ function CallScreen({ session, token, onEnd }: { session: CallSession; token: st
   async function endCall(result?: "answered" | "missed" | "declined") {
     if (endedRef.current) return;
     endedRef.current = true;
+    stopRingtone();
     if (pollRef.current) clearInterval(pollRef.current);
     pcRef.current?.close();
     localStreamRef.current?.getTracks().forEach(t => t.stop());
@@ -3881,6 +3915,17 @@ function CallScreen({ session, token, onEnd }: { session: CallSession; token: st
   }
 
   useEffect(() => { callStatusRef.current = callStatus; }, [callStatus]);
+
+  // ── Рингтон: запуск при ringing, стоп при active ──
+  useEffect(() => {
+    if (callStatus === "ringing") {
+      startRingtone(session.direction === "incoming");
+    } else {
+      stopRingtone();
+    }
+    return () => stopRingtone();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [callStatus]);
 
   useEffect(() => {
     if (callStatus !== "active") return;
@@ -5868,9 +5913,16 @@ export default function App() {
   // ── Регистрируем SW сразу при загрузке (до авторизации) ──
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
-    navigator.serviceWorker.register("/sw.js")
+    // Версионируем URL SW → браузер всегда загружает свежую версию после деплоя
+    const swVersion = (window as Window & { __SW_BUILD_TIME__?: string }).__SW_BUILD_TIME__ || Date.now().toString().slice(0, 8);
+    navigator.serviceWorker.register(`/sw.js?v=${swVersion}`)
       .then(reg => {
         setSwReady(true);
+        // Передаём BUILD_TIME в SW чтобы он обновил свой кэш-ключ
+        reg.active?.postMessage({ type: "SET_BUILD_TIME", buildTime: swVersion });
+        reg.installing?.addEventListener("statechange", function() {
+          if (this.state === "activated") this.postMessage({ type: "SET_BUILD_TIME", buildTime: swVersion });
+        });
         navigator.serviceWorker.addEventListener("message", (e) => {
           if (e.data?.type === "SYNC_REQUIRED") {
             window.dispatchEvent(new CustomEvent("kasper:sync"));
@@ -5878,11 +5930,9 @@ export default function App() {
           if (e.data?.type === "CALL_NOTIFICATION_CLICKED") {
             window.dispatchEvent(new CustomEvent("kasper:check-incoming-call"));
           }
-          // Ответить на звонок прямо из уведомления
           if (e.data?.type === "CALL_ANSWER_FROM_SW") {
             window.dispatchEvent(new CustomEvent("kasper:answer-call", { detail: { call_id: e.data.call_id } }));
           }
-          // Звонок отклонён из уведомления (без открытия приложения)
           if (e.data?.type === "CALL_DECLINED_FROM_SW") {
             window.dispatchEvent(new CustomEvent("kasper:declined-from-sw", { detail: { call_id: e.data.call_id } }));
           }
@@ -5913,6 +5963,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("chats");
   const [chatsForBadge, setChatsForBadge] = useState<{ unread: number }[]>([]);
   const [missedCallsCount, setMissedCallsCount] = useState(0);
+  const [showNotifPrompt, setShowNotifPrompt] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
   const [pinUnlocked, setPinUnlocked] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -5954,42 +6005,34 @@ export default function App() {
     }).catch(() => {});
   }
 
+  // Финальная подписка на Push после разрешения
+  const doSubscribePush = useCallback(async () => {
+    if (!token || !("PushManager" in window)) return;
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      syncNotifSettingsToSW();
+      const keyRes = await fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "vapid-public-key" }) });
+      const keyData = await keyRes.json();
+      if (!keyData.public_key) return;
+      const existing = await reg.pushManager.getSubscription();
+      const sub = existing ?? await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyData.public_key });
+      await fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "subscribe", ...sub.toJSON() }) });
+    } catch (_e) { /* push not supported or blocked */ }
+  }, [token]);
+
   // Подписка на Push-уведомления (после логина + после регистрации SW)
   useEffect(() => {
-    if (!token || !swReady || !("PushManager" in window)) return;
-
-    async function setupPush() {
-      try {
-        const perm = Notification.permission === "default"
-          ? await Notification.requestPermission()
-          : Notification.permission;
-        if (perm !== "granted") return;
-
-        const reg = await navigator.serviceWorker.ready;
-
-        // Передаём актуальные настройки в SW
-        syncNotifSettingsToSW();
-
-        const keyRes = await fetch(CHATS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "vapid-public-key" }) });
-        const keyData = await keyRes.json();
-        if (!keyData.public_key) return;
-
-        const existing = await reg.pushManager.getSubscription();
-        const sub = existing ?? await reg.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: keyData.public_key,
-        });
-
-        await fetch(CHATS_URL, {
-          method: "POST",
-          headers: apiHeaders(token),
-          body: JSON.stringify({ action: "subscribe", ...sub.toJSON() }),
-        });
-      } catch { /* push not supported or blocked */ }
-    }
-
-    setupPush();
-  }, [token, swReady]);
+    if (!token || !swReady || !("PushManager" in window) || !("Notification" in window)) return;
+    // Уже разрешено — просто подписываемся
+    if (Notification.permission === "granted") { doSubscribePush(); return; }
+    // Уже отклонено — не спрашиваем снова
+    if (Notification.permission === "denied") return;
+    // Показываем мягкий pre-prompt через 3 секунды после входа
+    const dismissed = localStorage.getItem("kasper_notif_prompt_dismissed");
+    if (dismissed) return;
+    const t = setTimeout(() => setShowNotifPrompt(true), 3000);
+    return () => clearTimeout(t);
+  }, [token, swReady, doSubscribePush]);
 
   const playSound = useCallback(() => {
     if (localStorage.getItem("s_msg_sound") === "0") return;
@@ -6416,6 +6459,33 @@ export default function App() {
           setActiveCall(null);
         }} />
       )}
+      {/* ── Pre-prompt разрешения на уведомления ── */}
+      {showNotifPrompt && (
+        <div className="fixed bottom-20 md:bottom-4 left-4 right-4 z-50 animate-fade-in" style={{ maxWidth: 480, margin: "0 auto" }}>
+          <div className="glass border border-blue-500/20 rounded-3xl p-4 shadow-2xl flex items-center gap-3"
+            style={{ boxShadow: "0 8px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,119,182,0.15)" }}>
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-600 to-cyan-500 flex items-center justify-center flex-shrink-0 shadow-[0_0_20px_rgba(0,119,182,0.4)]">
+              <Icon name="Bell" size={22} className="text-white" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="font-golos font-bold text-foreground text-sm">Включить уведомления</p>
+              <p className="text-xs text-muted-foreground">Получай звонки и сообщения даже с закрытым приложением</p>
+            </div>
+            <button onClick={async () => {
+              setShowNotifPrompt(false);
+              const perm = await Notification.requestPermission();
+              if (perm === "granted") doSubscribePush();
+            }} className="px-3 py-1.5 rounded-2xl bg-gradient-to-r from-blue-600 to-blue-700 text-white text-xs font-semibold hover:opacity-90 transition-all flex-shrink-0">
+              Включить
+            </button>
+            <button onClick={() => { localStorage.setItem("kasper_notif_prompt_dismissed", "1"); setShowNotifPrompt(false); }}
+              className="p-1.5 hover:bg-white/10 rounded-full transition-colors flex-shrink-0">
+              <Icon name="X" size={16} className="text-muted-foreground" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── Install banner (Android/Chrome) ── */}
       {showInstallBanner && installPrompt && (
         <div className="fixed bottom-20 md:bottom-4 left-4 right-4 z-50 animate-fade-in" style={{ maxWidth: 480, margin: "0 auto" }}>

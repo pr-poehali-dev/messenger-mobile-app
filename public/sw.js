@@ -1,8 +1,8 @@
 // ─── Каспер Service Worker ────────────────────────────────────────────────────
-// Обновляй BUILD_TIME при каждом деплое чтобы инвалидировать кэш у всех
-const BUILD_TIME = "20260324-v6";
-const CACHE_APP = `kasper-app-${BUILD_TIME}`;
-const CACHE_ASSETS = `kasper-assets-${BUILD_TIME}`;
+// BUILD_TIME обновляется автоматически через SET_BUILD_TIME сообщение от App
+let BUILD_TIME = "20260407-v1";
+let CACHE_APP = `kasper-app-${BUILD_TIME}`;
+let CACHE_ASSETS = `kasper-assets-${BUILD_TIME}`;
 const APP_ICON = "https://cdn.poehali.dev/projects/84792fb2-1985-42c4-8056-a4e27799a11a/bucket/2069fcb7-f721-4674-b0d8-51603e738767.png";
 const CALLS_URL = "https://functions.poehali.dev/ec19ea73-ee73-48c3-a4cc-a6104054ed8e";
 
@@ -115,6 +115,20 @@ self.addEventListener("message", e => {
   if (e.data.type === "UPDATE_AUTH_TOKEN") {
     swAuthToken = e.data.token || "";
   }
+  // Обновляем BUILD_TIME и пересоздаём кэш-ключи при деплое
+  if (e.data.type === "SET_BUILD_TIME" && e.data.buildTime) {
+    const newBuild = e.data.buildTime;
+    if (newBuild !== BUILD_TIME) {
+      BUILD_TIME = newBuild;
+      const oldApp = CACHE_APP;
+      const oldAssets = CACHE_ASSETS;
+      CACHE_APP = `kasper-app-${BUILD_TIME}`;
+      CACHE_ASSETS = `kasper-assets-${BUILD_TIME}`;
+      // Удаляем старые кэши
+      caches.delete(oldApp).catch(() => {});
+      caches.delete(oldAssets).catch(() => {});
+    }
+  }
   // Звонок завершён/принят — остановить повторные уведомления
   if (e.data.type === "CALL_ENDED" || e.data.type === "CALL_ANSWERED") {
     const callId = e.data.call_id;
@@ -122,7 +136,6 @@ self.addEventListener("message", e => {
       clearInterval(activeCallTimers.get(callId));
       activeCallTimers.delete(callId);
     }
-    // Закрываем уведомление о звонке
     self.registration.getNotifications({ tag: `call-${callId}` })
       .then(notifs => notifs.forEach(n => n.close()));
   }
@@ -287,6 +300,23 @@ async function declineCallFromSW(callId) {
     console.error("[SW] decline fetch error:", err);
   }
 }
+
+// ── Закрытие уведомления без действия ─────────────────────────────────────────
+self.addEventListener("notificationclose", e => {
+  const notifData = e.notification.data || {};
+  if (notifData.type === "call") {
+    const callId = notifData.call_id;
+    // Останавливаем повторные вибрации если пользователь смахнул уведомление
+    if (callId && activeCallTimers.has(callId)) {
+      clearInterval(activeCallTimers.get(callId));
+      activeCallTimers.delete(callId);
+    }
+    // Уведомляем приложение что уведомление закрыто (чтобы UI тоже обновился)
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then(list => {
+      list.forEach(c => c.postMessage({ type: "CALL_NOTIF_DISMISSED", call_id: callId }));
+    });
+  }
+});
 
 // ── Background Sync (для офлайн-сообщений) ────────────────────────────────────
 self.addEventListener("sync", e => {
