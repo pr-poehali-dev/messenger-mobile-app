@@ -3775,7 +3775,45 @@ function ProfileTab({ user, token, onLogout, onUserUpdate, onDeleteAccount }: {
 
 // ─── Other Tabs ───────────────────────────────────────────────────────────────
 
-function CallScreen({ session, token, onEnd }: { session: CallSession; token: string; onEnd: () => void }) {
+// ─── Call History (localStorage) ──────────────────────────────────────────────
+
+const CALL_HISTORY_KEY = "kasper_call_history";
+const CALL_HISTORY_MAX = 200;
+
+interface LocalCallRecord {
+  id: string;
+  peerId: number;
+  peerName: string;
+  peerAvatar?: string | null;
+  direction: "outgoing" | "incoming";
+  result: "answered" | "missed" | "declined";
+  isVideo: boolean;
+  startedAt: number;
+  duration: number;
+}
+
+function loadCallHistory(userId: number): LocalCallRecord[] {
+  try {
+    const raw = localStorage.getItem(`${CALL_HISTORY_KEY}_${userId}`);
+    return raw ? JSON.parse(raw) : [];
+  } catch (_e) { return []; }
+}
+
+function saveCallToHistory(userId: number, record: LocalCallRecord) {
+  try {
+    const existing = loadCallHistory(userId);
+    const updated = [record, ...existing].slice(0, CALL_HISTORY_MAX);
+    localStorage.setItem(`${CALL_HISTORY_KEY}_${userId}`, JSON.stringify(updated));
+  } catch (_e) { /* ignore */ }
+}
+
+function clearCallHistory(userId: number) {
+  localStorage.removeItem(`${CALL_HISTORY_KEY}_${userId}`);
+}
+
+// ─── CallScreen ───────────────────────────────────────────────────────────────
+
+function CallScreen({ session, token, onEnd }: { session: CallSession; token: string; onEnd: (result: "answered" | "missed" | "declined", duration: number) => void }) {
   const [elapsed, setElapsed] = useState(0);
   const [muted, setMuted] = useState(false);
   const [videoOff, setVideoOff] = useState(false);
@@ -3830,7 +3868,7 @@ function CallScreen({ session, token, onEnd }: { session: CallSession; token: st
     }).catch(() => {});
   }
 
-  async function endCall() {
+  async function endCall(result?: "answered" | "missed" | "declined") {
     if (endedRef.current) return;
     endedRef.current = true;
     if (pollRef.current) clearInterval(pollRef.current);
@@ -3838,7 +3876,8 @@ function CallScreen({ session, token, onEnd }: { session: CallSession; token: st
     localStreamRef.current?.getTracks().forEach(t => t.stop());
     if (remoteAudioRef.current) { remoteAudioRef.current.srcObject = null; remoteAudioRef.current.remove(); remoteAudioRef.current = null; }
     await fetch(CALLS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "end", call_id: session.callId }) }).catch(() => {});
-    onEnd();
+    const callResult = result ?? (callStatusRef.current === "active" ? "answered" : (session.direction === "incoming" ? "missed" : "missed"));
+    onEnd(callResult, elapsed);
   }
 
   useEffect(() => { callStatusRef.current = callStatus; }, [callStatus]);
@@ -4242,30 +4281,38 @@ function IncomingCallBanner({ session, onAccept, onDecline }: { session: CallSes
   );
 }
 
-function CallsTab({ token, onCall }: { token: string; onCall: (userId: number, userName: string, isVideo?: boolean) => void }) {
-  const [calls, setCalls] = useState<{ id: number; caller_id: number; callee_id: number; status: string; is_video: boolean; duration: string | null; type: string; caller_name: string; callee_name: string; caller_avatar?: string | null; callee_avatar?: string | null }[]>([]);
-  const [loading, setLoading] = useState(true);
+function CallsTab({ userId, onCall, missedCount }: { userId: number; onCall: (userId: number, userName: string, isVideo?: boolean) => void; missedCount: number }) {
+  const [calls, setCalls] = useState<LocalCallRecord[]>(() => loadCallHistory(userId));
   const [filter, setFilter] = useState<"all" | "incoming" | "outgoing" | "missed">("all");
 
-  useEffect(() => {
-    fetch(CALLS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "history" }) })
-      .then(r => r.json())
-      .then(d => { if (d.calls) setCalls(d.calls); })
-      .finally(() => setLoading(false));
-  }, [token]);
+  useEffect(() => { setCalls(loadCallHistory(userId)); }, [userId, missedCount]);
 
   const filtered = calls.filter(c => {
     if (filter === "all") return true;
-    if (filter === "missed") return c.status === "missed" || (c.type === "incoming" && c.status !== "ended");
-    return c.type === filter;
+    if (filter === "missed") return c.result === "missed";
+    if (filter === "incoming") return c.direction === "incoming";
+    if (filter === "outgoing") return c.direction === "outgoing";
+    return true;
   });
+
+  function formatDuration(secs: number) {
+    if (secs === 0) return null;
+    return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+  }
+
+  function formatTime(ts: number) {
+    const d = new Date(ts);
+    const now = new Date();
+    const isToday = d.toDateString() === now.toDateString();
+    if (isToday) return d.toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" });
+    return d.toLocaleDateString("ru", { day: "numeric", month: "short" });
+  }
 
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 pt-4 pb-3 flex-shrink-0">
         <h1 className="text-2xl font-golos font-black text-gradient mb-3">Звонки</h1>
-        {/* Фильтры */}
-        <div className="flex gap-1.5">
+        <div className="flex gap-1.5 flex-wrap">
           {(["all", "incoming", "outgoing", "missed"] as const).map(f => (
             <button key={f} onClick={() => setFilter(f)}
               className={`px-3 py-1 rounded-full text-xs font-medium transition-all
@@ -4277,52 +4324,54 @@ function CallsTab({ token, onCall }: { token: string; onCall: (userId: number, u
       </div>
 
       <div className="flex-1 overflow-y-auto scroll-container">
-        {loading && <div className="text-center py-8 text-sm text-muted-foreground">Загрузка...</div>}
-        {!loading && filtered.length === 0 && (
+        {filtered.length === 0 && (
           <div className="flex flex-col items-center justify-center h-48 gap-3 text-muted-foreground">
             <Icon name="Phone" size={36} className="opacity-30" />
-            <p className="text-sm">Звонков пока нет</p>
+            <p className="text-sm">{filter === "missed" ? "Пропущенных звонков нет" : "Звонков пока нет"}</p>
           </div>
         )}
         {filtered.map((call, i) => {
-          const isMissed = call.status === "missed" || (call.type === "incoming" && call.status === "ringing");
+          const isMissed = call.result === "missed";
+          const isDeclined = call.result === "declined";
           const cfg = isMissed
-            ? { icon: "PhoneMissed", color: "text-red-400", label: "Пропущенный" }
-            : call.type === "outgoing"
-              ? { icon: "PhoneOutgoing", color: "text-cyan-400", label: "Исходящий" }
-              : { icon: "PhoneIncoming", color: "text-green-400", label: "Входящий" };
-
-          const peerName = call.type === "outgoing" ? call.callee_name : call.caller_name;
-          const peerId = call.type === "outgoing" ? call.callee_id : call.caller_id;
-          const peerAvatar = call.type === "outgoing" ? call.callee_avatar : call.caller_avatar;
+            ? { icon: "PhoneMissed" as const, color: "text-red-400", label: "Пропущенный" }
+            : isDeclined
+              ? { icon: "PhoneOff" as const, color: "text-orange-400", label: "Отклонён" }
+              : call.direction === "outgoing"
+                ? { icon: "PhoneOutgoing" as const, color: "text-cyan-400", label: "Исходящий" }
+                : { icon: "PhoneIncoming" as const, color: "text-green-400", label: "Входящий" };
 
           return (
             <div key={call.id} className="flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-all animate-fade-in"
               style={{ animationDelay: `${i * 0.04}s` }}>
-              <AvatarEl name={peerName} size="md" avatarUrl={peerAvatar} />
+              <AvatarEl name={call.peerName} size="md" avatarUrl={call.peerAvatar} />
               <div className="flex-1 min-w-0">
-                <div className="font-golos font-semibold text-foreground text-sm truncate">{peerName}</div>
+                <div className="font-golos font-semibold text-foreground text-sm truncate">{call.peerName}</div>
                 <div className="flex items-center gap-1.5 mt-0.5">
                   <Icon name={cfg.icon} size={12} className={cfg.color} />
                   <span className={`text-xs ${cfg.color}`}>{cfg.label}</span>
-                  {call.is_video && (
+                  {call.isVideo && (
                     <span className="flex items-center gap-0.5 text-xs text-purple-400">
-                      <Icon name="Video" size={10} />видео
+                      <Icon name="Video" size={10} /> видео
                     </span>
                   )}
-                  {call.duration && <span className="text-xs text-muted-foreground">· {call.duration}</span>}
+                  {formatDuration(call.duration) && (
+                    <span className="text-xs text-muted-foreground">· {formatDuration(call.duration)}</span>
+                  )}
                 </div>
               </div>
-              {/* Перезвонить — аудио или видео в зависимости от типа */}
-              <div className="flex items-center gap-1">
-                <button onClick={() => onCall(peerId, peerName, false)}
-                  className="p-2 hover:bg-white/10 rounded-full transition-colors" title="Аудиозвонок">
-                  <Icon name="Phone" size={15} className="text-sky-400" />
-                </button>
-                <button onClick={() => onCall(peerId, peerName, true)}
-                  className="p-2 hover:bg-white/10 rounded-full transition-colors" title="Видеозвонок">
-                  <Icon name="Video" size={15} className="text-purple-400" />
-                </button>
+              <div className="flex flex-col items-end gap-1">
+                <span className="text-[10px] text-muted-foreground">{formatTime(call.startedAt)}</span>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => onCall(call.peerId, call.peerName, false)}
+                    className="p-1.5 hover:bg-white/10 rounded-full transition-colors" title="Аудиозвонок">
+                    <Icon name="Phone" size={14} className="text-sky-400" />
+                  </button>
+                  <button onClick={() => onCall(call.peerId, call.peerName, true)}
+                    className="p-1.5 hover:bg-white/10 rounded-full transition-colors" title="Видеозвонок">
+                    <Icon name="Video" size={14} className="text-purple-400" />
+                  </button>
+                </div>
               </div>
             </div>
           );
@@ -6018,10 +6067,22 @@ export default function App() {
   async function declineCall(session: CallSession) {
     if (!token) return;
     await fetch(CALLS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "decline", call_id: session.callId }) });
-    // Сообщаем SW чтобы закрыл уведомление
     navigator.serviceWorker.ready.then(reg => {
       reg.active?.postMessage({ type: "CALL_ENDED", call_id: session.callId });
     });
+    if (user) {
+      saveCallToHistory(user.id, {
+        id: `${session.callId}-${Date.now()}`,
+        peerId: session.peerId,
+        peerName: session.peerName,
+        peerAvatar: session.peerAvatar,
+        direction: "incoming",
+        result: "declined",
+        isVideo: !!session.isVideo,
+        startedAt: Date.now(),
+        duration: 0,
+      });
+    }
     setIncomingCall(null);
   }
 
@@ -6079,26 +6140,33 @@ export default function App() {
 
   const unreadCount = chatsForBadge.reduce((a, c) => a + (c.unread || 0), 0);
 
-  // ── Polling счётчика пропущенных звонков ──
+  // ── Динамический title страницы + Badge API ──
   useEffect(() => {
-    if (!token || !user) return;
-    const fetchMissed = () => {
-      fetch(CALLS_URL, { method: "POST", headers: apiHeaders(token), body: JSON.stringify({ action: "missed-count" }) })
-        .then(r => r.json())
-        .then(d => { if (typeof d.count === "number") setMissedCallsCount(d.count); })
-        .catch(() => {});
-    };
-    fetchMissed();
-    const interval = setInterval(fetchMissed, 15000);
-    return () => clearInterval(interval);
-  }, [token, user]);
+    const total = unreadCount + missedCallsCount;
+    const appName = "Каспер";
+    document.title = total > 0 ? `(${total > 99 ? "99+" : total}) ${appName}` : appName;
+    if ("setAppBadge" in navigator) {
+      if (total > 0) (navigator as Navigator & { setAppBadge: (n: number) => void }).setAppBadge(total);
+      else (navigator as Navigator & { clearAppBadge: () => void }).clearAppBadge();
+    }
+  }, [unreadCount, missedCallsCount]);
+
+  // ── Инициализация счётчика пропущенных из localStorage при входе ──
+  useEffect(() => {
+    if (!user) return;
+    const VIEWED_KEY = `kasper_calls_viewed_${user.id}`;
+    const lastViewed = parseInt(localStorage.getItem(VIEWED_KEY) || "0", 10);
+    const history = loadCallHistory(user.id);
+    const count = history.filter(c => c.result === "missed" && c.startedAt > lastViewed).length;
+    setMissedCallsCount(count);
+  }, [user]);
 
   // ── Сброс счётчика при открытии вкладки звонков ──
   const handleTabChange = (t: Tab) => {
     setTab(t);
-    if (t === "calls" && missedCallsCount > 0) {
+    if (t === "calls" && missedCallsCount > 0 && user) {
+      localStorage.setItem(`kasper_calls_viewed_${user.id}`, String(Date.now()));
       setMissedCallsCount(0);
-      fetch(CALLS_URL, { method: "POST", headers: apiHeaders(token!), body: JSON.stringify({ action: "mark-viewed" }) }).catch(() => {});
     }
   };
 
@@ -6149,7 +6217,7 @@ export default function App() {
       ));
     }} />,
     contacts: <ContactsTab token={token} onCall={startCall} onOpenChat={openChatWith} />,
-    calls: <CallsTab token={token} onCall={startCall} />,
+    calls: <CallsTab userId={user.id} onCall={startCall} missedCount={missedCallsCount} />,
     status: <StatusTab user={user} token={token} />,
     profile: <ProfileTab user={user} token={token} onLogout={handleLogout} onUserUpdate={u => { setUser(u); localStorage.setItem("pulse_user", JSON.stringify(u)); }} onDeleteAccount={handleLogout} />,
     settings: <SettingsTab onLogout={handleLogout} onTestSound={playSound} onNotifSettingsChange={syncNotifSettingsToSW} />,
@@ -6254,8 +6322,24 @@ export default function App() {
           onDecline={() => declineCall(incomingCall)}
         />
       )}
-      {activeCall && (
-        <CallScreen session={activeCall} token={token} onEnd={() => setActiveCall(null)} />
+      {activeCall && user && (
+        <CallScreen session={activeCall} token={token} onEnd={(result, duration) => {
+          saveCallToHistory(user.id, {
+            id: `${activeCall.callId}-${Date.now()}`,
+            peerId: activeCall.peerId,
+            peerName: activeCall.peerName,
+            peerAvatar: activeCall.peerAvatar,
+            direction: activeCall.direction,
+            result,
+            isVideo: !!activeCall.isVideo,
+            startedAt: Date.now() - duration * 1000,
+            duration,
+          });
+          if (result === "missed" && activeCall.direction === "incoming") {
+            setMissedCallsCount(c => c + 1);
+          }
+          setActiveCall(null);
+        }} />
       )}
       {/* ── Install banner (Android/Chrome) ── */}
       {showInstallBanner && installPrompt && (
